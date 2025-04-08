@@ -1,0 +1,298 @@
+
+# 最终数据存储格式
+
+## 1. TaskTemplate (存储在JSON文件中)
+
+```json
+{
+  "id": "template-123456",
+  "name": "GitHub Issues Tracker",
+  "description": "跟踪GitHub仓库的Issues并执行自动操作",
+  "createdAt": "2024-05-15T14:30:25.123456",
+  "updatedAt": "2024-05-15T14:30:25.123456",
+  "connectionType": "SSE",
+  "connectionParams": {
+    "serverUrl": "https://api.github.com/events"
+  },
+  "customizableParams": [
+    {
+      "name": "authToken",
+      "description": "认证令牌，用于连接到SSE服务器",
+      "type": "string",
+      "defaultValue": "",
+      "required": false,
+      "enumValues": null
+    },
+    {
+      "name": "customHeaders",
+      "description": "自定义HTTP头部，格式为JSON对象，每个键值对代表一个头部",
+      "type": "object",
+      "defaultValue": {},
+      "required": false,
+      "enumValues": null
+    },
+    {
+      "name": "heartbeatInterval",
+      "description": "心跳间隔（秒），0表示不发送心跳",
+      "type": "number",
+      "defaultValue": 30,
+      "required": false,
+      "enumValues": null
+    }
+  ],
+  "defaultConfig": {
+    "repository": "modelcontextprotocol/java-sdk",
+    "eventTypes": ["issues", "pull_request"],
+    "autoComment": true
+  },
+  "metadata": {
+    "version": "1.0",
+    "author": "System"
+  }
+}
+```
+
+## 2. RemoteTask (存储在JSON文件中)
+
+```json
+{
+  "id": "task-789012",
+  "name": "GitHub Java SDK监控",
+  "description": "跟踪GitHub仓库的Issues并执行自动操作",
+  "secretaryId": "secretary-345678",
+  "templateId": "template-123456",
+  "status": "ACTIVE",
+  "createdAt": "2024-05-16T09:15:30.654321",
+  "updatedAt": "2024-05-16T10:20:45.987654",
+  "connectionType": "SSE",
+  "connectionParams": {
+    "serverUrl": "https://api.github.com/events",
+    "authToken": "ghp_abc123def456",
+    "customHeaders": {
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    "heartbeatInterval": 60
+  },
+  "customizableParams": [
+    {
+      "name": "authToken",
+      "description": "认证令牌，用于连接到SSE服务器",
+      "type": "string",
+      "defaultValue": "",
+      "required": false,
+      "enumValues": null
+    },
+    {
+      "name": "customHeaders",
+      "description": "自定义HTTP头部，格式为JSON对象，每个键值对代表一个头部",
+      "type": "object",
+      "defaultValue": {},
+      "required": false,
+      "enumValues": null
+    },
+    {
+      "name": "heartbeatInterval",
+      "description": "心跳间隔（秒），0表示不发送心跳",
+      "type": "number",
+      "defaultValue": 30,
+      "required": false,
+      "enumValues": null
+    }
+  ],
+  "config": {
+    "repository": "modelcontextprotocol/java-sdk",
+    "eventTypes": ["issues", "pull_request", "discussions"],
+    "autoComment": true,
+    "notificationEmail": "admin@example.com"
+  },
+  "metadata": {
+    "lastActivated": "2024-05-16T10:20:45.987654",
+    "successCount": 42,
+    "errorCount": 2,
+    "lastExecutionResult": "success"
+  }
+}
+```
+
+## 3. Secretary (存储在JSON文件中)
+
+```json
+{
+  "id": "secretary-345678",
+  "name": "开发团队助手",
+  "createdAt": "2024-05-10T08:00:00.000000",
+  "updatedAt": "2024-05-16T10:20:45.987654",
+  "taskIds": [
+    "task-789012",
+    "task-789013",
+    "task-789014"
+  ],
+  "metadata": {
+    "description": "为开发团队提供自动化支持",
+    "owner": "技术部",
+    "tags": ["开发", "自动化", "GitHub"]
+  }
+}
+```
+
+## 4. 文件系统结构
+
+基于上述JSON格式，数据在文件系统中的组织结构如下：
+
+```
+storage-base-dir/
+├── templates/
+│   ├── template-123456/
+│   │   └── template.json
+│   └── template-234567/
+│       └── template.json
+├── secretaries/
+│   └── secretary-345678/
+│       ├── secretary.json
+│       └── tasks/
+│           ├── task-789012/
+│           │   ├── task.json
+│           │   ├── data/
+│           │   ├── logs/
+│           │   └── cache/
+│           ├── task-789013/
+│           │   └── ...
+│           └── task-789014/
+│               └── ...
+└── ...
+```
+
+## 5. API请求和响应示例
+
+**创建任务请求:**
+```json
+POST /api/tasks
+{
+  "templateId": "template-123456",
+  "secretaryId": "secretary-345678",
+  "name": "GitHub Java SDK监控",
+  "connectionParams": {
+    "authToken": "ghp_abc123def456",
+    "customHeaders": {
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    }
+  },
+  "config": {
+    "repository": "modelcontextprotocol/java-sdk",
+    "notificationEmail": "admin@example.com"
+  }
+}
+```
+
+**创建任务响应:**
+```json
+{
+  "id": "task-789012",
+  "name": "GitHub Java SDK监控",
+  "description": "跟踪GitHub仓库的Issues并执行自动操作",
+  "secretaryId": "secretary-345678",
+  "templateId": "template-123456",
+  "status": "INACTIVE",
+  "createdAt": "2024-05-16T09:15:30.654321",
+  "updatedAt": "2024-05-16T09:15:30.654321",
+  "connectionType": "SSE",
+  "customizableParams": [
+    {
+      "name": "authToken",
+      "description": "认证令牌，用于连接到SSE服务器",
+      "type": "string"
+    },
+    {
+      "name": "customHeaders",
+      "description": "自定义HTTP头部，格式为JSON对象，每个键值对代表一个头部",
+      "type": "object"
+    },
+    {
+      "name": "heartbeatInterval",
+      "description": "心跳间隔（秒），0表示不发送心跳",
+      "type": "number"
+    }
+  ],
+  "config": {
+    "repository": "modelcontextprotocol/java-sdk",
+    "eventTypes": ["issues", "pull_request"],
+    "autoComment": true,
+    "notificationEmail": "admin@example.com"
+  }
+}
+```
+
+这些JSON格式展示了数据如何在文件系统中存储，以及在API请求和响应中如何表示。系统保留了模板中定义的可自定义参数信息，确保用户了解哪些参数可以自定义以及这些参数的类型和描述。
+
+
+secretary-system/
+├── pom.xml
+│
+├── src/
+│   ├── main/
+│   │   ├── java/
+│   │   │   └── com/mcp/secretary/
+│   │   │       ├── SecretaryApplication.java
+│   │   │       │
+│   │   │       ├── config/
+│   │   │       │   └── McpConfig.java
+│   │   │       │
+│   │   │       ├── model/
+│   │   │       │   ├── Secretary.java           # 秘书实体
+│   │   │       │   ├── SecretaryInfo.java       # 秘书摘要信息
+│   │   │       │   ├── RemoteTask.java          # 远程任务实体
+│   │   │       │   ├── TaskTemplate.java        # 任务模板
+│   │   │       │   └── TemplateInfo.java        # 模板摘要信息
+│   │   │       │
+│   │   │       ├── service/
+│   │   │       │   ├── SecretaryService.java    # 秘书服务
+│   │   │       │   └── TaskService.java         # 任务服务
+│   │   │       │
+│   │   │       ├── storage/
+│   │   │       │   └── FileSystemStorage.java   # 文件系统存储
+│   │   │       │
+│   │   │       ├── proxy/
+│   │   │       │   ├── McpClientAdapter.java    # MCP客户端适配器
+│   │   │       │   └── TaskProxyServer.java     # 任务代理服务器
+│   │   │       │
+│   │   │       ├── web/
+│   │   │       │   ├── SecretaryController.java # 秘书API
+│   │   │       │   ├── TaskController.java      # 任务API
+│   │   │       │   └── TemplateController.java  # 模板API
+│   │   │       │
+│   │   │       └── util/
+│   │   │           ├── Constants.java           # 常量定义
+│   │   │           └── JsonUtils.java           # JSON工具
+│   │   │
+│   │   └── resources/
+│   │       ├── application.yml                  # 主配置文件
+│   │       ├── application-dev.yml              # 开发环境配置
+│   │       ├── application-prod.yml             # 生产环境配置
+│   │       ├── static/                          # 静态资源目录
+│   │       └── templates/                       # 模板目录
+│   │
+│   └── test/
+│       └── java/
+│           └── com/mcp/secretary/
+│               ├── SecretaryApplicationTests.java
+│               │
+│               ├── service/
+│               │   ├── SecretaryServiceTests.java
+│               │   └── TaskServiceTests.java
+│               │
+│               ├── storage/
+│               │   └── FileSystemStorageTests.java
+│               │
+│               ├── proxy/
+│               │   ├── McpClientAdapterTests.java
+│               │   └── TaskProxyServerTests.java
+│               │
+│               └── web/
+│                   ├── SecretaryControllerTests.java
+│                   ├── TaskControllerTests.java
+│                   └── TemplateControllerTests.java
+│
+└── target/
+    └── secretary-system-1.0.0-SNAPSHOT.jar

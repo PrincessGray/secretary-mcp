@@ -1,0 +1,30 @@
+# 生产环境配置
+
+# 服务器配置
+server:
+  port: 8080
+  tomcat:
+    accept-count: 100
+    max-connections: 8192
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/plain
+    min-response-size: 1024
+
+# 秘书系统配置
+io:
+  secretarymcp:
+    storage:
+      base-dir: /var/lib/secretary-data
+    mcp:
+      client:
+        url: http://mcp-server:8081/mcp
+      server:
+        port: 8082
+
+# 调整生产环境日志级别
+logging:
+  level:
+    root: WARN
+    "[io.secretarymcp]": INFO
+    "[org.springframework]": WARN

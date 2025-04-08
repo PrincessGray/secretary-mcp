@@ -1,0 +1,58 @@
+# Maven构建目录
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# IDE相关文件和目录
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+### VS Code ###
+.vscode/
+.factorypath
+
+### Eclipse ###
+.apt_generated
+.classpath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+# 编译文件
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# 日志文件
+*.log
+logs/
+log/
+
+# 虚拟机崩溃日志
+hs_err_pid*
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 应用特定文件
+application-local.properties
+application-local.yml
+*.env
+
+# 其他文件
+*.swp
+*~
+
+# 库文件夹
+java-sdk-main/

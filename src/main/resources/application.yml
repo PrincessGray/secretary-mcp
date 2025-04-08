@@ -1,0 +1,11 @@
+# 保持原有配置
+io:
+  secretarymcp:
+    storage:
+      base-dir: ${user.home}/secretary-data
+    # 其他配置保持不变
+
+# 添加兼容配置
+secretary:
+  storage:
+    base-dir: ${io.secretarymcp.storage.base-dir}

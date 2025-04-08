@@ -1,0 +1,196 @@
+package io.secretarymcp.util;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import lombok.Getter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+
+/**
+ * JSON处理工具类
+ */
+public class JsonUtils {
+    private static final Logger log = LoggerFactory.getLogger(JsonUtils.class);
+
+    /**
+     * -- GETTER --
+     *  获取共享的ObjectMapper实例
+     */
+    // 预配置的ObjectMapper实例
+    @Getter
+    private static final ObjectMapper objectMapper = createObjectMapper();
+    
+    /**
+     * 创建预配置的ObjectMapper
+     */
+    public static ObjectMapper createObjectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        
+        // 注册Java 8日期时间模块
+        mapper.registerModule(new JavaTimeModule());
+        
+        // 配置序列化选项
+        mapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        
+        return mapper;
+    }
+
+    /**
+     * 将对象转换为JSON字符串
+     */
+    public static <T> String toJson(T object) {
+        try {
+            return objectMapper.writeValueAsString(object);
+        } catch (JsonProcessingException e) {
+            log.error("序列化对象失败: {}", e.getMessage(), e);
+            throw new RuntimeException("序列化对象失败", e);
+        }
+    }
+    
+    /**
+     * 将JSON字符串转换为对象
+     */
+    public static <T> T fromJson(String json, Class<T> clazz) {
+        try {
+            return objectMapper.readValue(json, clazz);
+        } catch (JsonProcessingException e) {
+            log.error("反序列化JSON失败: {}", e.getMessage(), e);
+            throw new RuntimeException("反序列化JSON失败", e);
+        }
+    }
+    
+    /**
+     * 将JSON字符串转换为Map
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> jsonToMap(String json) {
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (JsonProcessingException e) {
+            log.error("JSON转Map失败: {}", e.getMessage(), e);
+            throw new RuntimeException("JSON转Map失败", e);
+        }
+    }
+    
+    /**
+     * 异步保存对象到JSON文件（简化版）
+     * 虽然内部使用阻塞操作，但通过在boundedElastic调度器上运行，
+     * 确保不会阻塞事件循环线程。
+     */
+    public static <T> Mono<Void> saveToFileAsync(T object, Path filePath) {
+        return Mono.fromCallable(() -> {
+                // 确保目录存在
+                Files.createDirectories(filePath.getParent());
+                
+                // 将对象序列化并写入文件
+                String json = objectMapper.writeValueAsString(object);
+                Files.writeString(filePath, json);
+                
+                log.debug("保存文件成功: {}", filePath);
+                return true;
+            })
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnError(e -> log.error("保存文件失败: {}", filePath, e))
+            .then();
+    }
+    
+    /**
+     * 异步从JSON文件加载对象（简化版）
+     * 
+     * 虽然内部使用阻塞操作，但通过在boundedElastic调度器上运行，
+     * 确保不会阻塞事件循环线程。
+     */
+    public static <T> Mono<T> loadFromFileAsync(Path filePath, Class<T> clazz) {
+        return Mono.fromCallable(() -> {
+                if (!Files.exists(filePath)) {
+                    log.debug("文件不存在: {}", filePath);
+                    return null;
+                }
+                
+                // 读取文件并反序列化
+                String content = Files.readString(filePath);
+                T result = objectMapper.readValue(content, clazz);
+                
+                log.debug("加载文件成功: {}", filePath);
+                return result;
+            })
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnError(e -> log.error("加载文件失败: {}", filePath, e));
+    }
+    
+    /**
+     * 检查文件是否存在（异步）
+     */
+    public static Mono<Boolean> existsAsync(Path filePath) {
+        return Mono.fromCallable(() -> Files.exists(filePath))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+    
+    /**
+     * 异步删除文件
+     */
+    public static Mono<Void> deleteFileAsync(Path filePath) {
+        return Mono.fromCallable(() -> {
+                if (Files.exists(filePath)) {
+                    Files.delete(filePath);
+                    log.debug("删除文件成功: {}", filePath);
+                }
+                return null;
+            })
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnError(e -> log.error("删除文件失败: {}", filePath, e))
+            .then();
+    }
+    
+    /**
+     * 异步读取文件内容为字符串
+     */
+    public static Mono<String> readFileAsStringAsync(Path filePath) {
+        return Mono.fromCallable(() -> {
+                if (!Files.exists(filePath)) {
+                    log.debug("文件不存在: {}", filePath);
+                    return null;
+                }
+                
+                // 读取文件内容
+                String content = Files.readString(filePath);
+                
+                log.debug("读取文件成功: {}", filePath);
+                return content;
+            })
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnError(e -> log.error("读取文件失败: {}", filePath, e));
+    }
+    
+    /**
+     * 异步写入字符串到文件
+     */
+    public static Mono<Void> writeFileAsync(String content, Path filePath) {
+        return Mono.fromCallable(() -> {
+                // 确保目录存在
+                Files.createDirectories(filePath.getParent());
+                
+                // 写入文件
+                Files.writeString(filePath, content);
+                
+                log.debug("写入文件成功: {}", filePath);
+                return true;
+            })
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnError(e -> log.error("写入文件失败: {}", filePath, e))
+            .then();
+    }
+}
