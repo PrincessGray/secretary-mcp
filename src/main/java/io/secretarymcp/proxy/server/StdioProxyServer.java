@@ -6,15 +6,14 @@ import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 import io.secretarymcp.proxy.client.UpstreamClient;
 import io.secretarymcp.proxy.client.UpstreamClientConfig;
 import io.secretarymcp.proxy.client.UpstreamClientFactory;
 import io.secretarymcp.util.Constants;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -30,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * STDIO代理服务器
  */
 @Component  // 添加此注解
-public class StdioProxyServer  {
+public class StdioProxyServer {
     private static final Logger log = LoggerFactory.getLogger(StdioProxyServer.class);
     
     // 对象映射器
@@ -286,5 +285,4 @@ public class StdioProxyServer  {
         // 这个方法主要用于保持服务器运行，直到收到关闭信号
         return Mono.never();
     }
-
 }

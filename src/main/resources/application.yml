@@ -9,3 +9,14 @@ io:
 secretary:
   storage:
     base-dir: ${io.secretarymcp.storage.base-dir}
+
+# 启用虚拟线程
+spring:
+  threads:
+    virtual:
+      enabled: true
+
+# 调整Netty相关配置以配合虚拟线程使用
+reactor:
+  netty:
+    ioWorkerCount: 4  # 减少IO线程数，因为虚拟线程会处理大部分IO

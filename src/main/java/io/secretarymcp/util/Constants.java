@@ -33,20 +33,20 @@ public class Constants {
         }
     }
     
-    // 任务类型（通信方式）
+    // 连接类型（统一定义，替代TaskType）
     @Getter
-    public enum TaskType {
+    public enum ConnectionType {
         SSE("sse"),        // Server-Sent Events 通信
         STDIO("stdio");    // 标准输入输出通信
         
         private final String value;
         
-        TaskType(String value) {
+        ConnectionType(String value) {
             this.value = value;
         }
 
-        public static TaskType fromValue(String value) {
-            for (TaskType type : TaskType.values()) {
+        public static ConnectionType fromValue(String value) {
+            for (ConnectionType type : ConnectionType.values()) {
                 if (type.value.equals(value)) {
                     return type;
                 }

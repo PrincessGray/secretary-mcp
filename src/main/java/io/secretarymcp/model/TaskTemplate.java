@@ -1,7 +1,7 @@
 package io.secretarymcp.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import io.secretarymcp.util.Constants.TaskType;
+import io.secretarymcp.util.Constants;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -30,170 +30,240 @@ public class TaskTemplate {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     
-    // 连接配置
-    private TaskType connectionType;  // 连接类型：SSE或STDIO
-    private Map<String, Object> connectionParams;  // 连接参数
+    // 使用统一的ConnectionProfile
+    private ConnectionProfile connectionProfile;
     
-    // 可自定义参数描述
-    private List<ParamDefinition> customizableParams;
+    // 可定制配置项标记
+    private List<ConfigParam> customizableParams;
     
     // 默认任务配置
     private Map<String, Object> defaultConfig;
     
     // 元数据
     private Map<String, Object> metadata;
-    
+
     /**
-     * 参数定义，描述可自定义的参数
+     * 配置参数定义，标识可定制的参数
      */
     @Data
+    @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    @Builder
-    public static class ParamDefinition {
-        private String name;               // 参数名称
-        private String description;        // 参数描述
-        private String type;               // 参数类型 (string, number, boolean, object, array)
-        private Object defaultValue;       // 默认值
-        private boolean required;          // 是否必需
-        private List<Object> enumValues;   // 枚举值(如果适用)
+    public static class ConfigParam {
+        private String name;           // 参数名称
+        private String displayName;    // 显示名称
+        private String description;    // 参数描述
+        private String type;           // 参数类型 (string, number, boolean等)
+        private boolean required;      // 是否必填
+        private Object defaultValue;   // 默认值
+        private ConfigParamCategory category; // 参数类别
+        
+        // 参数所属类别
+        public enum ConfigParamCategory {
+            STDIO_ENV,        // STDIO环境变量
+            STDIO_ARG,        // STDIO命令行参数(只允许选择是否启用)
+            SSE_AUTH_PARAM    // SSE认证参数(如API密钥、用户名等)
+        }
     }
     
     /**
      * 创建一个新的任务模板实例
      */
-    public static TaskTemplate create(String name, String description, TaskType connectionType) {
-        return TaskTemplate.builder()
+    public static TaskTemplate create(String name, String description, Constants.ConnectionType connectionType) {
+        TaskTemplate template = TaskTemplate.builder()
                 .id(UUID.randomUUID().toString())
                 .name(name)
                 .description(description)
-                .connectionType(connectionType)
-                .connectionParams(new HashMap<>())
                 .customizableParams(new ArrayList<>())
                 .defaultConfig(new HashMap<>())
                 .metadata(new HashMap<>())
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();
+        
+        // 初始化连接配置
+        template.setConnectionProfile(new ConnectionProfile());
+        template.getConnectionProfile().setConnectionType(connectionType);
+        
+        // 根据连接类型初始化特定配置
+        if (connectionType == Constants.ConnectionType.STDIO) {
+            template.getConnectionProfile().setStdioConfig(new StdioConfig());
+        } else {
+            template.getConnectionProfile().setSseConfig(new SseConfig());
+        }
+        
+        return template;
     }
     
     /**
-     * 为SSE连接类型添加连接参数
+     * 创建SSE连接模板
      */
-    public void configureSseConnection(String serverUrl) {
-        if (this.connectionType != TaskType.SSE) {
-            throw new IllegalStateException("只能为SSE类型的任务配置SSE连接参数");
-        }
+    public static TaskTemplate createSseTemplate(String name, String description, String serverUrl) {
+        TaskTemplate template = create(name, description, Constants.ConnectionType.SSE);
         
-        Map<String, Object> params = new HashMap<>();
-        params.put("serverUrl", serverUrl);  // 唯一必需的参数
-        
-        this.connectionParams = params;
-        
-        // 设置可自定义参数
-        List<ParamDefinition> customParams = new ArrayList<>();
-        
-        // 添加认证令牌参数
-        customParams.add(ParamDefinition.builder()
-                .name("authToken")
-                .description("认证令牌，用于连接到SSE服务器")
-                .type("string")
-                .defaultValue("")  // 空字符串作为默认值
-                .required(false)
-                .build());
-                
-        // 添加自定义头部参数
-        customParams.add(ParamDefinition.builder()
-                .name("customHeaders")
-                .description("自定义HTTP头部，格式为JSON对象，每个键值对代表一个头部")
-                .type("object")
-                .defaultValue(new HashMap<String, String>())  // 空Map作为默认值
-                .required(false)
-                .build());
-                
-        // 添加连接超时参数
-        customParams.add(ParamDefinition.builder()
-                .name("connectionTimeoutSeconds")
-                .description("连接超时时间（秒）")
-                .type("number")
-                .defaultValue(60)  // 60秒作为默认值
-                .required(false)
-                .build());
-                
-        this.customizableParams = customParams;
+        // 配置SSE连接
+        SseConfig sseConfig = template.getConnectionProfile().getSseConfig();
+        sseConfig.setServerUrl(serverUrl);
         
         // 添加默认配置
-        setDefaultConfigValue("enableRoots", false);
-        setDefaultConfigValue("enableSampling", false);
+        template.setDefaultConfigValue("enableRoots", false);
+        template.setDefaultConfigValue("enableSampling", false);
+        
+        return template;
     }
     
     /**
-     * 为STDIO连接类型添加连接参数
+     * 创建STDIO连接模板
      */
-    public void configureStdioConnection(String command) {
-        if (this.connectionType != TaskType.STDIO) {
-            throw new IllegalStateException("只能为STDIO类型的任务配置STDIO连接参数");
-        }
+    public static TaskTemplate createStdioTemplate(String name, String description, String command) {
+        TaskTemplate template = create(name, description, Constants.ConnectionType.STDIO);
         
-        Map<String, Object> params = new HashMap<>();
-        params.put("command", command);
-        
-        this.connectionParams = params;
-        
-        // 设置可自定义参数
-        List<ParamDefinition> customParams = new ArrayList<>();
-        
-        // 添加环境变量参数
-        customParams.add(ParamDefinition.builder()
-                .name("environmentVars")
-                .description("环境变量，格式为JSON对象，每个键值对代表一个环境变量")
-                .type("object")
-                .defaultValue(new HashMap<String, String>())
-                .required(false)
-                .build());
-                
-        // 添加命令参数
-        customParams.add(ParamDefinition.builder()
-                .name("commandArgs")
-                .description("命令行参数，格式为字符串数组")
-                .type("array")
-                .defaultValue(new ArrayList<String>())
-                .required(false)
-                .build());
-                
-        // 添加工作目录参数
-        customParams.add(ParamDefinition.builder()
-                .name("workingDir")
-                .description("命令执行的工作目录路径")
-                .type("string")
-                .defaultValue("")
-                .required(false)
-                .build());
-                
-        // 添加连接超时参数
-        customParams.add(ParamDefinition.builder()
-                .name("connectionTimeoutSeconds")
-                .description("连接超时时间（秒）")
-                .type("number")
-                .defaultValue(60)
-                .required(false)
-                .build());
-                
-        this.customizableParams = customParams;
+        // 配置STDIO连接
+        StdioConfig stdioConfig = template.getConnectionProfile().getStdioConfig();
+        stdioConfig.setCommand(command);
+        stdioConfig.setCommandArgs(new ArrayList<>());
+        stdioConfig.setEnvironmentVars(new HashMap<>());
         
         // 添加默认配置
-        setDefaultConfigValue("enableRoots", false);
-        setDefaultConfigValue("enableSampling", false);
+        template.setDefaultConfigValue("enableRoots", false);
+        template.setDefaultConfigValue("enableSampling", false);
+        
+        return template;
     }
     
     /**
-     * 添加自定义参数定义
+     * 添加可定制的环境变量参数 (STDIO)
      */
-    public void addCustomizableParam(ParamDefinition paramDefinition) {
-        if (this.customizableParams == null) {
-            this.customizableParams = new ArrayList<>();
+    public void addCustomizableEnvParam(String name, String displayName, String description, String defaultValue, boolean required) {
+        if (getConnectionProfile().getConnectionType() != Constants.ConnectionType.STDIO) {
+            throw new IllegalStateException("只有STDIO连接类型支持环境变量参数");
         }
-        this.customizableParams.add(paramDefinition);
+        
+        ConfigParam param = ConfigParam.builder()
+                .name(name)
+                .displayName(displayName)
+                .description(description)
+                .type("string")
+                .defaultValue(defaultValue)
+                .required(required)
+                .category(ConfigParam.ConfigParamCategory.STDIO_ENV)
+                .build();
+                
+        getCustomizableParams().add(param);
+        
+        // 如果有默认值，设置到环境变量中
+        if (defaultValue != null) {
+            StdioConfig stdioConfig = getConnectionProfile().getStdioConfig();
+            if (stdioConfig.getEnvironmentVars() == null) {
+                stdioConfig.setEnvironmentVars(new HashMap<>());
+            }
+            stdioConfig.getEnvironmentVars().put(name, defaultValue);
+        }
+    }
+    
+    /**
+     * 添加可定制的命令行参数 (STDIO)，只允许选择是否启用
+     */
+    public void addCustomizableArgParam(String name, String displayName, String description, boolean enabledByDefault, boolean required) {
+        if (getConnectionProfile().getConnectionType() != Constants.ConnectionType.STDIO) {
+            throw new IllegalStateException("只有STDIO连接类型支持命令行参数");
+        }
+        
+        ConfigParam param = ConfigParam.builder()
+                .name(name)
+                .displayName(displayName)
+                .description(description)
+                .type("boolean")
+                .defaultValue(enabledByDefault)
+                .required(required)
+                .category(ConfigParam.ConfigParamCategory.STDIO_ARG)
+                .build();
+        
+        getCustomizableParams().add(param);
+        
+        // 如果默认启用，添加到命令行参数列表
+        if (enabledByDefault) {
+            StdioConfig stdioConfig = getConnectionProfile().getStdioConfig();
+            if (stdioConfig.getCommandArgs() == null) {
+                stdioConfig.setCommandArgs(new ArrayList<>());
+            }
+            stdioConfig.getCommandArgs().add(name);
+        }
+    }
+    
+    /**
+     * 添加SSE认证参数
+     */
+    public void addSseAuthParam(String name, String displayName, String description, String defaultValue, boolean required) {
+        if (getConnectionProfile().getConnectionType() != Constants.ConnectionType.SSE) {
+            throw new IllegalStateException("只有SSE连接类型支持认证参数");
+        }
+        
+        ConfigParam param = ConfigParam.builder()
+                .name(name)                // 使用传入的名称，而不是固定为"apiKey"
+                .displayName(displayName)
+                .description(description)
+                .type("string")
+                .defaultValue(defaultValue)
+                .required(required)
+                .category(ConfigParam.ConfigParamCategory.SSE_AUTH_PARAM)
+                .build();
+        
+        getCustomizableParams().add(param);
+        
+        // 如果有默认值且参数名为apiKey，设置到SSE配置的authToken中
+        if (defaultValue != null && "apiKey".equals(name)) {
+            SseConfig sseConfig = getConnectionProfile().getSseConfig();
+            sseConfig.setAuthToken(defaultValue);
+        } else if (defaultValue != null) {
+            // 对于其他参数，添加到自定义标头中
+            SseConfig sseConfig = getConnectionProfile().getSseConfig();
+            if (sseConfig.getCustomHeaders() == null) {
+                sseConfig.setCustomHeaders(new HashMap<>());
+            }
+            sseConfig.getCustomHeaders().put(name, defaultValue);
+        }
+    }
+    
+    // 添加辅助方法来设置标准GeneralConfig字段
+    private boolean setStandardGeneralConfigField(String name, Object value) {
+        GeneralConfig config = getConnectionProfile().getGeneralConfig();
+        
+        switch (name) {
+            case "timeoutSeconds":
+                if (value instanceof Number) {
+                    config.setTimeoutSeconds(((Number) value).intValue());
+                    return true;
+                }
+                break;
+            case "retryCount":
+                if (value instanceof Number) {
+                    config.setRetryCount(((Number) value).intValue());
+                    return true;
+                }
+                break;
+            case "enableRoots":
+                if (value instanceof Boolean) {
+                    config.setEnableRoots((Boolean) value);
+                    return true;
+                }
+                break;
+            case "enableSampling":
+                if (value instanceof Boolean) {
+                    config.setEnableSampling((Boolean) value);
+                    return true;
+                }
+                break;
+            case "loggingLevel":
+                if (value instanceof String) {
+                    config.setLoggingLevel((String) value);
+                    return true;
+                }
+                break;
+            // 添加其他标准字段...
+        }
+        
+        return false; // 不是标准字段
     }
     
     /**
@@ -214,11 +284,12 @@ public class TaskTemplate {
     }
     
     /**
-     * 获取完整的连接参数
+     * 确保customizableParams初始化
      */
-    public Map<String, Object> getConnectionParams() {
-        return connectionParams != null ? new HashMap<>(connectionParams) : new HashMap<>();
+    public List<ConfigParam> getCustomizableParams() {
+        if (customizableParams == null) {
+            customizableParams = new ArrayList<>();
+        }
+        return customizableParams;
     }
-
-    
 }

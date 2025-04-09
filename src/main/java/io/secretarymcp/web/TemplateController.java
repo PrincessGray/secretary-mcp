@@ -1,9 +1,8 @@
 package io.secretarymcp.web;
 
-import io.secretarymcp.model.TaskTemplate;
-import io.secretarymcp.model.TemplateInfo;
+import io.secretarymcp.model.*;
 import io.secretarymcp.service.TaskService;
-import io.secretarymcp.util.Constants.TaskType;
+import io.secretarymcp.util.Constants;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -15,6 +14,9 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -55,39 +57,142 @@ public class TemplateController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Mono<TaskTemplate> createTemplate(@RequestBody CreateTemplateRequest request) {
-        TaskType connectionType;
+        Constants.ConnectionType connectionType;
         try {
-            connectionType = TaskType.fromValue(request.getConnectionType());
+            connectionType = Constants.ConnectionType.fromValue(request.getConnectionType());
         } catch (Exception e) {
             return Mono.error(new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "无效的连接类型: " + request.getConnectionType()));
         }
         
-        // 创建模板基础对象
-        TaskTemplate template = TaskTemplate.create(
-                request.getName(),
-                request.getDescription(),
-                connectionType
-        );
+        TaskTemplate template;
         
-        // 根据连接类型设置连接参数
-        if (connectionType == TaskType.SSE) {
+        // 根据连接类型创建不同的模板
+        if (connectionType == Constants.ConnectionType.SSE) {
             if (request.getSseServerUrl() == null) {
                 return Mono.error(new ResponseStatusException(
                         HttpStatus.BAD_REQUEST, "SSE模板必须提供serverUrl"));
             }
-            template.configureSseConnection(request.getSseServerUrl());
-        } else if (connectionType == TaskType.STDIO) {
+            
+            // 使用工厂方法创建SSE模板
+            template = TaskTemplate.createSseTemplate(
+                    request.getName(),
+                    request.getDescription(),
+                    request.getSseServerUrl()
+            );
+            
+            // 设置其他SSE特定参数
+            SseConfig sseConfig = template.getConnectionProfile().getSseConfig();
+            if (request.getSseAuthToken() != null) {
+                sseConfig.setAuthToken(request.getSseAuthToken());
+            }
+            
+            if (request.getSseHeaders() != null) {
+                sseConfig.setCustomHeaders(request.getSseHeaders());
+            }
+            
+        } else if (connectionType == Constants.ConnectionType.STDIO) {
             if (request.getStdioCommand() == null) {
                 return Mono.error(new ResponseStatusException(
                         HttpStatus.BAD_REQUEST, "STDIO模板必须提供command"));
             }
-            template.configureStdioConnection(request.getStdioCommand());
+            
+            // 使用工厂方法创建STDIO模板
+            template = TaskTemplate.createStdioTemplate(
+                    request.getName(),
+                    request.getDescription(),
+                    request.getStdioCommand()
+            );
+            
+            // 设置其他STDIO特定参数
+            StdioConfig stdioConfig = template.getConnectionProfile().getStdioConfig();
+            if (request.getStdioArgs() != null) {
+                stdioConfig.setCommandArgs(request.getStdioArgs());
+            }
+            
+            if (request.getStdioEnv() != null) {
+                stdioConfig.setEnvironmentVars(request.getStdioEnv());
+            }
+        } else {
+            return Mono.error(new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "不支持的连接类型: " + connectionType));
+        }
+        
+        // 设置通用配置
+        GeneralConfig generalConfig = template.getConnectionProfile().getGeneralConfig();
+        if (generalConfig == null) {
+            generalConfig = new GeneralConfig();
+            template.getConnectionProfile().setGeneralConfig(generalConfig);
+        }
+        
+        if (request.getTimeoutSeconds() != null) {
+            generalConfig.setTimeoutSeconds(request.getTimeoutSeconds());
+        }
+        
+        if (request.getEnableRoots() != null) {
+            generalConfig.setEnableRoots(request.getEnableRoots());
+        }
+        
+        if (request.getEnableSampling() != null) {
+            generalConfig.setEnableSampling(request.getEnableSampling());
+        }
+        
+        // 设置其他自定义配置
+        if (request.getCustomSettings() != null) {
+            for (Map.Entry<String, Object> entry : request.getCustomSettings().entrySet()) {
+                generalConfig.setCustomSetting(entry.getKey(), entry.getValue());
+            }
         }
         
         // 设置默认配置
         if (request.getDefaultConfig() != null) {
-            template.setDefaultConfig(request.getDefaultConfig());
+            for (Map.Entry<String, Object> entry : request.getDefaultConfig().entrySet()) {
+                template.setDefaultConfigValue(entry.getKey(), entry.getValue());
+            }
+        }
+        
+        // 添加可定制参数
+        if (request.getCustomizableParams() != null) {
+            for (CustomizableParamRequest param : request.getCustomizableParams()) {
+                switch (param.getCategory()) {
+                    case STDIO_ENV:
+                        template.addCustomizableEnvParam(
+                            param.getName(),
+                            param.getDisplayName(),
+                            param.getDescription(),
+                            (String) param.getDefaultValue(),
+                            param.isRequired()
+                        );
+                        break;
+                    case STDIO_ARG:
+                        boolean enabledByDefault = false;
+                        if (param.getDefaultValue() != null) {
+                            if (param.getDefaultValue() instanceof Boolean) {
+                                enabledByDefault = (Boolean) param.getDefaultValue();
+                            } else {
+                                enabledByDefault = Boolean.parseBoolean(param.getDefaultValue().toString());
+                            }
+                        }
+                        
+                        template.addCustomizableArgParam(
+                            param.getName(),
+                            param.getDisplayName(),
+                            param.getDescription(),
+                            enabledByDefault,
+                            param.isRequired()
+                        );
+                        break;
+                    case SSE_AUTH_PARAM:
+                        template.addSseAuthParam(
+                            param.getName(),
+                            param.getDisplayName(),
+                            param.getDescription(),
+                            (String) param.getDefaultValue(),
+                            param.isRequired()
+                        );
+                        break;
+                }
+            }
         }
         
         return taskService.createTemplate(template)
@@ -121,9 +226,42 @@ public class TemplateController {
         private String name;
         private String description;
         private String connectionType; // "sse" 或 "stdio"
-        private String sseServerUrl;   // SSE 连接URL
-        private String stdioCommand;   // STDIO 命令
-        private Map<String, Object> defaultConfig; // 默认配置
-
+        
+        // SSE特定参数
+        private String sseServerUrl;
+        private String sseAuthToken;
+        private Map<String, String> sseHeaders;
+        
+        // STDIO特定参数
+        private String stdioCommand;
+        private List<String> stdioArgs;
+        private Map<String, String> stdioEnv;
+        
+        // 通用配置参数
+        private Integer timeoutSeconds;
+        private Boolean enableRoots;
+        private Boolean enableSampling;
+        private Map<String, Object> customSettings;
+        
+        // 其他配置
+        private Map<String, Object> defaultConfig;
+        
+        // 可定制参数
+        private List<CustomizableParamRequest> customizableParams;
+    }
+    
+    /**
+     * 可定制参数请求对象
+     */
+    @Setter
+    @Getter
+    public static class CustomizableParamRequest {
+        private String name;
+        private String displayName;
+        private String description;
+        private String type;
+        private boolean required;
+        private Object defaultValue;
+        private TaskTemplate.ConfigParam.ConfigParamCategory category;
     }
 }

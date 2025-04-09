@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.secretarymcp.config.SecretaryProperties;
 import io.secretarymcp.proxy.server.StdioProxyServer;
 import io.secretarymcp.storage.FileSystemStorage;
+import lombok.Getter;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -30,6 +31,7 @@ public class SecretaryApplication {
     private final FileSystemStorage storage;
     private final StdioProxyServer proxyServer;
     private final Environment environment;
+    @Getter
     private final ObjectMapper objectMapper;
     
     // 用于阻塞主线程的锁
@@ -51,7 +53,7 @@ public class SecretaryApplication {
         // 创建应用上下文
         ConfigurableApplicationContext context = SpringApplication.run(SecretaryApplication.class, args);
         
-        if (stdioMode) {
+        if (!stdioMode) {
             log.info("以stdio模式启动");
             
             // 获取应用实例

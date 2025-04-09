@@ -1,6 +1,6 @@
 package io.secretarymcp.model;
 
-import io.secretarymcp.util.Constants.TaskType;
+import io.secretarymcp.util.Constants.ConnectionType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,7 +17,7 @@ public class TemplateInfo {
     private String id;
     private String name;
     private String description;
-    private TaskType connectionType;
+    private ConnectionType connectionType;
     
     /**
      * 从完整的TaskTemplate实体转换为TemplateInfo
@@ -27,7 +27,7 @@ public class TemplateInfo {
                 .id(template.getId())
                 .name(template.getName())
                 .description(template.getDescription())
-                .connectionType(template.getConnectionType())
+                .connectionType(template.getConnectionProfile().getConnectionType())
                 .build();
     }
 }

@@ -10,18 +10,25 @@ import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.Executors;
 
 /**
  * JSON处理工具类
  */
 public class JsonUtils {
     private static final Logger log = LoggerFactory.getLogger(JsonUtils.class);
+
+    // 默认虚拟线程调度器
+    private static final Scheduler DEFAULT_VIRTUAL_SCHEDULER = Schedulers.fromExecutor(
+        Executors.newVirtualThreadPerTaskExecutor()
+    );
 
     /**
      * -- GETTER --
@@ -86,11 +93,16 @@ public class JsonUtils {
     }
     
     /**
-     * 异步保存对象到JSON文件（简化版）
-     * 虽然内部使用阻塞操作，但通过在boundedElastic调度器上运行，
-     * 确保不会阻塞事件循环线程。
+     * 异步保存对象到JSON文件（使用默认调度器）
      */
     public static <T> Mono<Void> saveToFileAsync(T object, Path filePath) {
+        return saveToFileAsync(object, filePath, DEFAULT_VIRTUAL_SCHEDULER);
+    }
+    
+    /**
+     * 异步保存对象到JSON文件（指定调度器）
+     */
+    public static <T> Mono<Void> saveToFileAsync(T object, Path filePath, Scheduler scheduler) {
         return Mono.fromCallable(() -> {
                 // 确保目录存在
                 Files.createDirectories(filePath.getParent());
@@ -102,18 +114,22 @@ public class JsonUtils {
                 log.debug("保存文件成功: {}", filePath);
                 return true;
             })
-            .subscribeOn(Schedulers.boundedElastic())
+            .subscribeOn(scheduler)
             .doOnError(e -> log.error("保存文件失败: {}", filePath, e))
             .then();
     }
     
     /**
-     * 异步从JSON文件加载对象（简化版）
-     * 
-     * 虽然内部使用阻塞操作，但通过在boundedElastic调度器上运行，
-     * 确保不会阻塞事件循环线程。
+     * 异步从JSON文件加载对象（使用默认调度器）
      */
     public static <T> Mono<T> loadFromFileAsync(Path filePath, Class<T> clazz) {
+        return loadFromFileAsync(filePath, clazz, DEFAULT_VIRTUAL_SCHEDULER);
+    }
+    
+    /**
+     * 异步从JSON文件加载对象（指定调度器）
+     */
+    public static <T> Mono<T> loadFromFileAsync(Path filePath, Class<T> clazz, Scheduler scheduler) {
         return Mono.fromCallable(() -> {
                 if (!Files.exists(filePath)) {
                     log.debug("文件不存在: {}", filePath);
@@ -127,22 +143,36 @@ public class JsonUtils {
                 log.debug("加载文件成功: {}", filePath);
                 return result;
             })
-            .subscribeOn(Schedulers.boundedElastic())
+            .subscribeOn(scheduler)
             .doOnError(e -> log.error("加载文件失败: {}", filePath, e));
     }
     
     /**
-     * 检查文件是否存在（异步）
+     * 检查文件是否存在（异步，使用默认调度器）
      */
     public static Mono<Boolean> existsAsync(Path filePath) {
-        return Mono.fromCallable(() -> Files.exists(filePath))
-                .subscribeOn(Schedulers.boundedElastic());
+        return existsAsync(filePath, DEFAULT_VIRTUAL_SCHEDULER);
     }
     
     /**
-     * 异步删除文件
+     * 检查文件是否存在（异步，指定调度器）
+     */
+    public static Mono<Boolean> existsAsync(Path filePath, Scheduler scheduler) {
+        return Mono.fromCallable(() -> Files.exists(filePath))
+                .subscribeOn(scheduler);
+    }
+    
+    /**
+     * 异步删除文件（使用默认调度器）
      */
     public static Mono<Void> deleteFileAsync(Path filePath) {
+        return deleteFileAsync(filePath, DEFAULT_VIRTUAL_SCHEDULER);
+    }
+    
+    /**
+     * 异步删除文件（指定调度器）
+     */
+    public static Mono<Void> deleteFileAsync(Path filePath, Scheduler scheduler) {
         return Mono.fromCallable(() -> {
                 if (Files.exists(filePath)) {
                     Files.delete(filePath);
@@ -150,15 +180,22 @@ public class JsonUtils {
                 }
                 return null;
             })
-            .subscribeOn(Schedulers.boundedElastic())
+            .subscribeOn(scheduler)
             .doOnError(e -> log.error("删除文件失败: {}", filePath, e))
             .then();
     }
     
     /**
-     * 异步读取文件内容为字符串
+     * 异步读取文件内容为字符串（使用默认调度器）
      */
     public static Mono<String> readFileAsStringAsync(Path filePath) {
+        return readFileAsStringAsync(filePath, DEFAULT_VIRTUAL_SCHEDULER);
+    }
+    
+    /**
+     * 异步读取文件内容为字符串（指定调度器）
+     */
+    public static Mono<String> readFileAsStringAsync(Path filePath, Scheduler scheduler) {
         return Mono.fromCallable(() -> {
                 if (!Files.exists(filePath)) {
                     log.debug("文件不存在: {}", filePath);
@@ -171,14 +208,21 @@ public class JsonUtils {
                 log.debug("读取文件成功: {}", filePath);
                 return content;
             })
-            .subscribeOn(Schedulers.boundedElastic())
+            .subscribeOn(scheduler)
             .doOnError(e -> log.error("读取文件失败: {}", filePath, e));
     }
     
     /**
-     * 异步写入字符串到文件
+     * 异步写入字符串到文件（使用默认调度器）
      */
     public static Mono<Void> writeFileAsync(String content, Path filePath) {
+        return writeFileAsync(content, filePath, DEFAULT_VIRTUAL_SCHEDULER);
+    }
+    
+    /**
+     * 异步写入字符串到文件（指定调度器）
+     */
+    public static Mono<Void> writeFileAsync(String content, Path filePath, Scheduler scheduler) {
         return Mono.fromCallable(() -> {
                 // 确保目录存在
                 Files.createDirectories(filePath.getParent());
@@ -189,7 +233,7 @@ public class JsonUtils {
                 log.debug("写入文件成功: {}", filePath);
                 return true;
             })
-            .subscribeOn(Schedulers.boundedElastic())
+            .subscribeOn(scheduler)
             .doOnError(e -> log.error("写入文件失败: {}", filePath, e))
             .then();
     }

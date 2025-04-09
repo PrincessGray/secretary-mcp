@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
@@ -20,14 +21,20 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
- * 基于文件系统的存储实现（非阻塞调度版本）
+ * 基于文件系统的存储实现（虚拟线程调度版本）
  */
 @Service
 public class FileSystemStorage {
     private static final Logger log = LoggerFactory.getLogger(FileSystemStorage.class);
+    
+    // 创建虚拟线程调度器
+    private static final Scheduler VIRTUAL_THREADS = Schedulers.fromExecutor(
+        Executors.newVirtualThreadPerTaskExecutor()
+    );
     
     @Value("${secretary.storage.base-dir}")
     private String baseDir;
@@ -49,7 +56,7 @@ public class FileSystemStorage {
             log.info("存储系统初始化完成，基础目录: {}", baseDir);
             return null;
         })
-        .subscribeOn(Schedulers.boundedElastic())
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
         .onErrorMap(e -> {
             log.error("存储系统初始化失败: {}", e.getMessage(), e);
             return new RuntimeException("存储系统初始化失败", e);
@@ -67,7 +74,7 @@ public class FileSystemStorage {
         }
         
         Path filePath = Constants.PathsUtil.getSecretaryFile(baseDir, secretary.getId());
-        return JsonUtils.saveToFileAsync(secretary, filePath)
+        return JsonUtils.saveToFileAsync(secretary, filePath, VIRTUAL_THREADS) // 传入虚拟线程调度器
                 .thenReturn(true)
                 .onErrorResume(e -> {
                     log.error("保存秘书失败: {}", e.getMessage(), e);
@@ -80,7 +87,7 @@ public class FileSystemStorage {
      */
     public Mono<Secretary> loadSecretary(String secretaryId) {
         Path filePath = Constants.PathsUtil.getSecretaryFile(baseDir, secretaryId);
-        return JsonUtils.loadFromFileAsync(filePath, Secretary.class);
+        return JsonUtils.loadFromFileAsync(filePath, Secretary.class, VIRTUAL_THREADS); // 传入虚拟线程调度器
     }
     
     /**
@@ -112,7 +119,7 @@ public class FileSystemStorage {
             log.info("已删除秘书: {}", secretaryId);
             return true;
         })
-        .subscribeOn(Schedulers.boundedElastic())
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
         .onErrorResume(e -> {
             log.error("删除秘书失败: {}", secretaryId, e);
             return Mono.just(false);
@@ -135,8 +142,9 @@ public class FileSystemStorage {
                 return stream
                     .filter(Files::isDirectory)
                     .collect(Collectors.toList());
-        }})
-        .subscribeOn(Schedulers.boundedElastic())
+            }
+        })
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
         .flatMapMany(Flux::fromIterable)
         .flatMap(dir -> {
             String secretaryId = dir.getFileName().toString();
@@ -157,7 +165,7 @@ public class FileSystemStorage {
         }
         
         Path filePath = Constants.PathsUtil.getTaskFile(baseDir, secretaryId, task.getId());
-        return JsonUtils.saveToFileAsync(task, filePath)
+        return JsonUtils.saveToFileAsync(task, filePath, VIRTUAL_THREADS) // 传入虚拟线程调度器
                 .thenReturn(true)
                 .onErrorResume(e -> {
                     log.error("保存任务失败: {}", e.getMessage(), e);
@@ -170,7 +178,7 @@ public class FileSystemStorage {
      */
     public Mono<RemoteTask> loadTask(String secretaryId, String taskId) {
         Path filePath = Constants.PathsUtil.getTaskFile(baseDir, secretaryId, taskId);
-        return JsonUtils.loadFromFileAsync(filePath, RemoteTask.class);
+        return JsonUtils.loadFromFileAsync(filePath, RemoteTask.class, VIRTUAL_THREADS); // 传入虚拟线程调度器
     }
     
     /**
@@ -202,14 +210,14 @@ public class FileSystemStorage {
             log.info("已删除任务: {}/{}", secretaryId, taskId);
             return true;
         })
-        .subscribeOn(Schedulers.boundedElastic())
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
         .onErrorResume(e -> {
             log.error("删除任务失败: {}/{}", secretaryId, taskId, e);
             return Mono.just(false);
         });
     }
     
-        /**
+    /**
      * 列出秘书的所有任务
      */
     public Flux<RemoteTask> listTasks(String secretaryId) {
@@ -225,8 +233,9 @@ public class FileSystemStorage {
                 return stream
                     .filter(Files::isDirectory)
                     .collect(Collectors.toList());
-        }})
-        .subscribeOn(Schedulers.boundedElastic())
+            }
+        })
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
         .flatMapMany(Flux::fromIterable)
         .flatMap(dir -> {
             String taskId = dir.getFileName().toString();
@@ -251,8 +260,8 @@ public class FileSystemStorage {
             Files.createDirectories(filePath.getParent());
             return filePath;
         })
-        .subscribeOn(Schedulers.boundedElastic())
-        .flatMap(path -> JsonUtils.saveToFileAsync(template, path))
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
+        .flatMap(path -> JsonUtils.saveToFileAsync(template, path, VIRTUAL_THREADS))
         .thenReturn(true)
         .onErrorResume(e -> {
             log.error("保存模板失败: {}", e.getMessage(), e);
@@ -265,7 +274,7 @@ public class FileSystemStorage {
      */
     public Mono<TaskTemplate> loadTemplate(String templateId) {
         Path filePath = Constants.PathsUtil.getTemplateFile(baseDir, templateId);
-        return JsonUtils.loadFromFileAsync(filePath, TaskTemplate.class);
+        return JsonUtils.loadFromFileAsync(filePath, TaskTemplate.class, VIRTUAL_THREADS); // 传入虚拟线程调度器
     }
     
     /**
@@ -297,7 +306,7 @@ public class FileSystemStorage {
             log.info("已删除模板: {}", templateId);
             return true;
         })
-        .subscribeOn(Schedulers.boundedElastic())
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
         .onErrorResume(e -> {
             log.error("删除模板失败: {}", templateId, e);
             return Mono.just(false);
@@ -322,7 +331,7 @@ public class FileSystemStorage {
                                 .collect(Collectors.toList());
                     }
                 })
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
                 .flatMapMany(Flux::fromIterable)
                 .flatMap(dir -> {
                     String templateId = dir.getFileName().toString();
@@ -364,7 +373,7 @@ public class FileSystemStorage {
             Files.createDirectories(dir);
             return null;
         })
-        .subscribeOn(Schedulers.boundedElastic())
+        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
         .onErrorMap(e -> {
             log.error("创建任务子目录失败: {}", dir, e);
             return new RuntimeException("创建目录失败: " + dir, e);
@@ -377,7 +386,7 @@ public class FileSystemStorage {
     public Mono<Void> saveTaskFile(String secretaryId, String taskId, String fileName, String content) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.writeFileAsync(content, filePath);
+        return JsonUtils.writeFileAsync(content, filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
     }
     
     /**
@@ -386,16 +395,16 @@ public class FileSystemStorage {
     public Mono<String> readTaskFile(String secretaryId, String taskId, String fileName) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.readFileAsStringAsync(filePath);
+        return JsonUtils.readFileAsStringAsync(filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
     }
     
-    /**
+        /**
      * 检查任务文件是否存在
      */
     public Mono<Boolean> taskFileExists(String secretaryId, String taskId, String fileName) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.existsAsync(filePath);
+        return JsonUtils.existsAsync(filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
     }
     
     /**
@@ -404,6 +413,6 @@ public class FileSystemStorage {
     public Mono<Void> deleteTaskFile(String secretaryId, String taskId, String fileName) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.deleteFileAsync(filePath);
+        return JsonUtils.deleteFileAsync(filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
     }
 }

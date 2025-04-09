@@ -8,6 +8,10 @@ import io.modelcontextprotocol.client.transport.StdioClientTransport;
 import io.modelcontextprotocol.client.transport.WebFluxSseClientTransport;
 import io.modelcontextprotocol.spec.McpClientTransport;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.secretarymcp.model.ConnectionProfile;
+import io.secretarymcp.model.SseConfig;
+import io.secretarymcp.model.StdioConfig;
+import io.secretarymcp.util.Constants;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,8 +102,9 @@ public class UpstreamClientFactory {
      * 创建上游客户端（核心创建逻辑）
      */
     private Mono<UpstreamClient> createClient(UpstreamClientConfig config) {
+        ConnectionProfile connectionProfile = config.getConnectionProfile();
         log.info("创建新上游客户端: {} (类型: {})", 
-                config.getTaskId(), config.getConnectionType());
+                config.getTaskId(), connectionProfile.getConnectionType());
         
         // 创建传输层
         return createTransport(config)
@@ -109,7 +114,7 @@ public class UpstreamClientFactory {
                     
                     // 初始化客户端
                     return client.initialize()
-                            .timeout(Duration.ofSeconds(config.getConnectionTimeoutSeconds()))
+                            .timeout(Duration.ofSeconds(connectionProfile.getConnectionTimeoutSeconds()))
                             .doOnSuccess(result -> {
                                 log.info("上游客户端初始化成功: {} -> {}", 
                                         config.getTaskId(), client.getServerInfo().name());
@@ -129,13 +134,14 @@ public class UpstreamClientFactory {
      * 创建传输层
      */
     private Mono<McpClientTransport> createTransport(UpstreamClientConfig config) {
-        if (config.getConnectionType() == UpstreamClientConfig.ConnectionType.STDIO) {
+        ConnectionProfile connectionProfile = config.getConnectionProfile();
+        if (connectionProfile.getConnectionType() == Constants.ConnectionType.STDIO) {
             return createStdioTransport(config);
-        } else if (config.getConnectionType() == UpstreamClientConfig.ConnectionType.SSE) {
+        } else if (connectionProfile.getConnectionType() == Constants.ConnectionType.SSE) {
             return createSseTransport(config);
         } else {
             return Mono.error(new IllegalArgumentException(
-                    "不支持的连接类型: " + config.getConnectionType()));
+                    "不支持的连接类型: " + connectionProfile.getConnectionType()));
         }
     }
     
@@ -143,30 +149,33 @@ public class UpstreamClientFactory {
      * 创建STDIO传输层
      */
     private Mono<McpClientTransport> createStdioTransport(UpstreamClientConfig config) {
-        if (config.getCommand() == null || config.getCommand().isEmpty()) {
+        ConnectionProfile connectionProfile = config.getConnectionProfile();
+        StdioConfig stdioConfig = connectionProfile.getStdioConfig();
+        
+        if (stdioConfig == null || stdioConfig.getCommand() == null || stdioConfig.getCommand().isEmpty()) {
             return Mono.error(new IllegalArgumentException("STDIO连接必须提供command"));
         }
         
         return Mono.fromCallable(() -> {
-            log.info("创建STDIO传输层: {} -> {}", config.getTaskId(), config.getCommand());
+            log.info("创建STDIO传输层: {} -> {}", config.getTaskId(), stdioConfig.getCommand());
             
             // 创建服务器参数构建器
-            ServerParameters.Builder paramsBuilder = ServerParameters.builder(config.getCommand());
+            ServerParameters.Builder paramsBuilder = ServerParameters.builder(stdioConfig.getCommand());
             
             // 添加命令行参数
-            if (config.getCommandArgs() != null && !config.getCommandArgs().isEmpty()) {
-                paramsBuilder.args(config.getCommandArgs());
+            if (stdioConfig.getCommandArgs() != null && !stdioConfig.getCommandArgs().isEmpty()) {
+                paramsBuilder.args(stdioConfig.getCommandArgs());
             }
             
             // 添加环境变量
-            if (config.getEnvironmentVars() != null && !config.getEnvironmentVars().isEmpty()) {
-                paramsBuilder.env(config.getEnvironmentVars());
+            if (stdioConfig.getEnvironmentVars() != null && !stdioConfig.getEnvironmentVars().isEmpty()) {
+                paramsBuilder.env(stdioConfig.getEnvironmentVars());
             }
             
-            // 注意：ServerParameters不再支持workingDirectory方法
-            // 我们通过环境变量来传递工作目录
-            if (config.getWorkingDir() != null && !config.getWorkingDir().isEmpty()) {
-                paramsBuilder.addEnvVar("WORKING_DIR", config.getWorkingDir());
+            // 通过环境变量传递工作目录
+            String workingDir = stdioConfig.getWorkingDir();
+            if (workingDir != null && !workingDir.isEmpty()) {
+                paramsBuilder.addEnvVar("WORKING_DIR", workingDir);
             }
             
             // 构建服务器参数并创建STDIO传输层
@@ -180,20 +189,23 @@ public class UpstreamClientFactory {
      * 创建SSE传输层
      */
     private Mono<McpClientTransport> createSseTransport(UpstreamClientConfig config) {
-        if (config.getServerUrl() == null || config.getServerUrl().isEmpty()) {
+        ConnectionProfile connectionProfile = config.getConnectionProfile();
+        SseConfig sseConfig = connectionProfile.getSseConfig();
+        
+        if (sseConfig == null || sseConfig.getServerUrl() == null || sseConfig.getServerUrl().isEmpty()) {
             return Mono.error(new IllegalArgumentException("SSE连接必须提供serverUrl"));
         }
         
         return Mono.fromCallable(() -> {
-            log.info("创建SSE传输层: {} -> {}", config.getTaskId(), config.getServerUrl());
+            log.info("创建SSE传输层: {} -> {}", config.getTaskId(), sseConfig.getServerUrl());
             
             // 创建WebClient构建器
             WebClient.Builder webClientBuilder = WebClient.builder()
-                    .baseUrl(config.getServerUrl());
+                    .baseUrl(sseConfig.getServerUrl());
             
             // 添加自定义头部
-            if (config.getCustomHeaders() != null) {
-                config.getCustomHeaders().forEach((key, value) -> {
+            if (sseConfig.getCustomHeaders() != null) {
+                sseConfig.getCustomHeaders().forEach((key, value) -> {
                     if (key != null && value != null) {
                         webClientBuilder.defaultHeader(key, value);
                     }
@@ -201,8 +213,8 @@ public class UpstreamClientFactory {
             }
             
             // 添加认证Token
-            if (config.getAuthToken() != null && !config.getAuthToken().isEmpty()) {
-                webClientBuilder.defaultHeader("Authorization", "Bearer " + config.getAuthToken());
+            if (sseConfig.getAuthToken() != null && !sseConfig.getAuthToken().isEmpty()) {
+                webClientBuilder.defaultHeader("Authorization", "Bearer " + sseConfig.getAuthToken());
             }
             
             // 直接创建并返回SSE传输层，更简洁
@@ -215,16 +227,31 @@ public class UpstreamClientFactory {
      * 创建MCP客户端
      */
     private McpAsyncClient createMcpClient(UpstreamClientConfig config, McpClientTransport transport) {
+        ConnectionProfile connectionProfile = config.getConnectionProfile();
+        
         // 构建客户端能力
         McpSchema.ClientCapabilities capabilities = null;
-        if (config.isEnableSampling() || config.isEnableRoots()) {
+        boolean enableRoots = false;
+        boolean enableSampling = false;
+        
+        if (connectionProfile.getGeneralConfig() != null) {
+            if (connectionProfile.getGeneralConfig().getEnableRoots() != null) {
+                enableRoots = connectionProfile.getGeneralConfig().getEnableRoots();
+            }
+            
+            if (connectionProfile.getGeneralConfig().getEnableSampling() != null) {
+                enableSampling = connectionProfile.getGeneralConfig().getEnableSampling();
+            }
+        }
+        
+        if (enableRoots || enableSampling) {
             var capabilitiesBuilder = McpSchema.ClientCapabilities.builder();
             
-            if (config.isEnableRoots()) {
+            if (enableRoots) {
                 capabilitiesBuilder.roots(true);  // 启用文件系统根支持，带列表变更通知
             }
             
-            if (config.isEnableSampling()) {
+            if (enableSampling) {
                 capabilitiesBuilder.sampling();   // 启用LLM采样支持
             }
             
@@ -233,7 +260,7 @@ public class UpstreamClientFactory {
         
         // 创建异步客户端
         var builder = McpClient.async(transport)
-                .requestTimeout(Duration.ofSeconds(config.getConnectionTimeoutSeconds()));
+                .requestTimeout(Duration.ofSeconds(connectionProfile.getConnectionTimeoutSeconds()));
         
         // 设置能力（如果已配置）
         if (capabilities != null) {
@@ -241,7 +268,7 @@ public class UpstreamClientFactory {
         }
         
         // 配置采样处理（如果启用）
-        if (config.isEnableSampling() && config.getSamplingHandler() != null) {
+        if (enableSampling && config.getSamplingHandler() != null) {
             builder.sampling(config.getSamplingHandler());
         }
         

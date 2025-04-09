@@ -1,8 +1,8 @@
 package io.secretarymcp.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.secretarymcp.util.Constants;
 import io.secretarymcp.util.Constants.TaskStatus;
-import io.secretarymcp.util.Constants.TaskType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 远程任务，基于任务模板创建
@@ -34,12 +35,11 @@ public class RemoteTask {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     
-    // 连接配置
-    private TaskType connectionType;
-    private Map<String, Object> connectionParams;
+    // 使用ConnectionProfile替代直接的连接参数
+    private ConnectionProfile connectionProfile;
     
-    // 可自定义参数描述 (从模板继承)
-    private List<TaskTemplate.ParamDefinition> customizableParams;
+    // 保存模板中定义的可定制参数
+    private List<TaskTemplate.ConfigParam> customizableParams;
     
     // 任务配置
     private Map<String, Object> config;
@@ -53,57 +53,175 @@ public class RemoteTask {
     public static RemoteTask fromTemplate(TaskTemplate template, String secretaryId, String name) {
         String taskName = name != null && !name.isBlank() ? name : template.getName();
         
-        return RemoteTask.builder()
+        RemoteTask task = RemoteTask.builder()
                 .id(UUID.randomUUID().toString())
                 .name(taskName)
                 .description(template.getDescription())
                 .secretaryId(secretaryId)
                 .templateId(template.getId())
                 .status(TaskStatus.INACTIVE)
-                .connectionType(template.getConnectionType())
-                .connectionParams(new HashMap<>(template.getConnectionParams()))
                 .customizableParams(new ArrayList<>(template.getCustomizableParams()))
                 .config(new HashMap<>(template.getDefaultConfig()))
                 .metadata(new HashMap<>())
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();
+        
+        // 深拷贝ConnectionProfile
+        task.setConnectionProfile(deepCopy(template.getConnectionProfile()));
+        
+        return task;
     }
     
     /**
-     * 应用参数配置到连接参数
-     * 只有在customizableParams中定义的参数才会被应用
+     * 应用自定义参数
      */
-    public void applyCustomConnectionParams(Map<String, Object> customParams) {
-        if (customParams == null || customParams.isEmpty()) {
+    public void applyCustomParams(Map<String, Object> customParams) {
+        if (customParams == null || customParams.isEmpty() || customizableParams == null) {
             return;
         }
         
-        if (this.connectionParams == null) {
-            this.connectionParams = new HashMap<>();
-        }
-        
-        // 只应用定义为可自定义的参数
-        if (this.customizableParams != null) {
-            for (TaskTemplate.ParamDefinition paramDef : this.customizableParams) {
-                if (customParams.containsKey(paramDef.getName())) {
-                    this.connectionParams.put(paramDef.getName(), customParams.get(paramDef.getName()));
-                }
+        for (TaskTemplate.ConfigParam param : customizableParams) {
+            if (!customParams.containsKey(param.getName())) {
+                continue;
+            }
+            
+            Object value = customParams.get(param.getName());
+            
+            // 根据参数类别应用配置
+            switch (param.getCategory()) {
+                case STDIO_ENV:
+                    applyStdioEnvParam(param.getName(), String.valueOf(value));
+                    break;
+                case STDIO_ARG:
+                    // 只处理布尔值，决定是否启用此参数
+                    applyStdioArgParam(param, Boolean.parseBoolean(String.valueOf(value)));
+                    break;
+                case SSE_AUTH_PARAM:
+                    applySseAuthParam(param.getName(), String.valueOf(value));
+                    break;
             }
         }
         
         this.updatedAt = LocalDateTime.now();
     }
     
-    /**
-     * 更新任务配置
-     */
-    public void updateConfig(Map<String, Object> updates) {
-        if (this.config == null) {
-            this.config = new HashMap<>();
+    private void applyStdioEnvParam(String name, String value) {
+        if (connectionProfile != null && 
+            connectionProfile.getConnectionType() == Constants.ConnectionType.STDIO &&
+            connectionProfile.getStdioConfig() != null) {
+                
+            if (connectionProfile.getStdioConfig().getEnvironmentVars() == null) {
+                connectionProfile.getStdioConfig().setEnvironmentVars(new HashMap<>());
+            }
+            
+            connectionProfile.getStdioConfig().getEnvironmentVars().put(name, value);
         }
-        this.config.putAll(updates);
-        this.updatedAt = LocalDateTime.now();
+    }
+    
+    private void applyStdioArgParam(TaskTemplate.ConfigParam param, boolean enabled) {
+        if (connectionProfile != null && 
+            connectionProfile.getConnectionType() == Constants.ConnectionType.STDIO &&
+            connectionProfile.getStdioConfig() != null) {
+                
+            if (connectionProfile.getStdioConfig().getCommandArgs() == null) {
+                connectionProfile.getStdioConfig().setCommandArgs(new ArrayList<>());
+            }
+            
+            // 获取存储在参数中的实际命令行参数值
+            String argValue = param.getName();
+            
+            // 如果启用，添加到命令行参数
+            if (enabled) {
+                if (!connectionProfile.getStdioConfig().getCommandArgs().contains(argValue)) {
+                    connectionProfile.getStdioConfig().getCommandArgs().add(argValue);
+                }
+            } else {
+                // 如果禁用，从列表中移除
+                connectionProfile.getStdioConfig().getCommandArgs().remove(argValue);
+            }
+        }
+    }
+    
+    private void applySseAuthParam(String name, String value) {
+        if (connectionProfile != null && 
+            connectionProfile.getConnectionType() == Constants.ConnectionType.SSE &&
+            connectionProfile.getSseConfig() != null) {
+                
+            // 如果是apiKey，设置为authToken
+            if ("apiKey".equals(name)) {
+                connectionProfile.getSseConfig().setAuthToken(value);
+            } else {
+                // 否则设置为自定义头
+                if (connectionProfile.getSseConfig().getCustomHeaders() == null) {
+                    connectionProfile.getSseConfig().setCustomHeaders(new HashMap<>());
+                }
+                connectionProfile.getSseConfig().getCustomHeaders().put(name, value);
+            }
+        }
+    }
+    
+    /**
+     * 检查特定参数是否为可定制参数
+     */
+    public boolean isCustomizableParam(String paramName) {
+        if (this.customizableParams == null) {
+            return false;
+        }
+        
+        return this.customizableParams.stream()
+                .anyMatch(param -> param.getName().equals(paramName));
+    }
+    
+    /**
+     * 根据名称获取可定制参数定义
+     */
+    public TaskTemplate.ConfigParam getConfigParam(String paramName) {
+        if (this.customizableParams == null) {
+            return null;
+        }
+        
+        return this.customizableParams.stream()
+                .filter(param -> param.getName().equals(paramName))
+                .findFirst()
+                .orElse(null);
+    }
+    
+    /**
+     * 根据类别获取所有可定制参数
+     */
+    public List<TaskTemplate.ConfigParam> getConfigParamsByCategory(TaskTemplate.ConfigParam.ConfigParamCategory category) {
+        if (this.customizableParams == null) {
+            return new ArrayList<>();
+        }
+        
+        return this.customizableParams.stream()
+                .filter(param -> param.getCategory() == category)
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * 获取所有可定制的环境变量参数
+     */
+    public List<TaskTemplate.ConfigParam> getEnvParams() {
+        return getConfigParamsByCategory(TaskTemplate.ConfigParam.ConfigParamCategory.STDIO_ENV);
+    }
+    
+    /**
+     * 获取所有可定制的命令行参数
+     */
+    public List<TaskTemplate.ConfigParam> getArgParams() {
+        return getConfigParamsByCategory(TaskTemplate.ConfigParam.ConfigParamCategory.STDIO_ARG);
+    }
+    
+    /**
+     * 获取API密钥参数
+     */
+    public TaskTemplate.ConfigParam getApiKeyParam() {
+        List<TaskTemplate.ConfigParam> apiKeyParams = 
+            getConfigParamsByCategory(TaskTemplate.ConfigParam.ConfigParamCategory.SSE_AUTH_PARAM);
+        
+        return apiKeyParams.isEmpty() ? null : apiKeyParams.getFirst();
     }
     
     /**
@@ -154,43 +272,14 @@ public class RemoteTask {
     }
     
     /**
-     * 获取完整的配置
+     * 更新任务配置
      */
-    public Map<String, Object> getConfig() {
-        return config != null ? new HashMap<>(config) : new HashMap<>();
-    }
-    
-    /**
-     * 获取完整的连接参数
-     */
-    public Map<String, Object> getConnectionParams() {
-        return connectionParams != null ? new HashMap<>(connectionParams) : new HashMap<>();
-    }
-    
-    /**
-     * 检查参数是否为可自定义参数
-     */
-    public boolean isCustomizableParam(String paramName) {
-        if (this.customizableParams == null) {
-            return false;
+    public void updateConfig(Map<String, Object> updates) {
+        if (this.config == null) {
+            this.config = new HashMap<>();
         }
-        
-        return this.customizableParams.stream()
-                .anyMatch(param -> param.getName().equals(paramName));
-    }
-    
-    /**
-     * 获取可自定义参数的描述
-     */
-    public TaskTemplate.ParamDefinition getParamDefinition(String paramName) {
-        if (this.customizableParams == null) {
-            return null;
-        }
-        
-        return this.customizableParams.stream()
-                .filter(param -> param.getName().equals(paramName))
-                .findFirst()
-                .orElse(null);
+        this.config.putAll(updates);
+        this.updatedAt = LocalDateTime.now();
     }
     
     /**
@@ -202,7 +291,7 @@ public class RemoteTask {
         status.put("taskId", this.id);
         status.put("taskName", this.name);
         status.put("status", this.status);
-        status.put("connectionType", this.connectionType);
+        status.put("connectionType", this.connectionProfile.getConnectionType());
         
         // 添加最近错误信息
         if (this.metadata != null && this.metadata.containsKey("lastError")) {
@@ -210,5 +299,58 @@ public class RemoteTask {
         }
         
         return status;
+    }
+    
+    // 辅助方法用于深拷贝ConnectionProfile
+    private static ConnectionProfile deepCopy(ConnectionProfile original) {
+        if (original == null) {
+            return new ConnectionProfile();
+        }
+        
+        ConnectionProfile copy = new ConnectionProfile();
+        copy.setConnectionType(original.getConnectionType());
+        copy.setConnectionTimeoutSeconds(original.getConnectionTimeoutSeconds());
+        
+        // 复制GeneralConfig
+        GeneralConfig generalConfig = new GeneralConfig();
+        if (original.getGeneralConfig() != null) {
+            generalConfig.setTimeoutSeconds(original.getGeneralConfig().getTimeoutSeconds());
+            generalConfig.setRetryCount(original.getGeneralConfig().getRetryCount());
+//            generalConfig.setEnableRoots(original.getGeneralConfig().isEnableRoots());
+//            generalConfig.setEnableSampling(original.getGeneralConfig().isEnableSampling());
+            generalConfig.setLoggingLevel(original.getGeneralConfig().getLoggingLevel());
+            
+            if (original.getGeneralConfig().getCustomSettings() != null) {
+                generalConfig.setCustomSettings(new HashMap<>(original.getGeneralConfig().getCustomSettings()));
+            }
+        }
+        copy.setGeneralConfig(generalConfig);
+
+        if (original.getConnectionType() == Constants.ConnectionType.STDIO && original.getStdioConfig() != null) {
+            StdioConfig stdioConfig = new StdioConfig();
+            stdioConfig.setCommand(original.getStdioConfig().getCommand());
+            
+            if (original.getStdioConfig().getCommandArgs() != null) {
+                stdioConfig.setCommandArgs(new ArrayList<>(original.getStdioConfig().getCommandArgs()));
+            }
+            
+            if (original.getStdioConfig().getEnvironmentVars() != null) {
+                stdioConfig.setEnvironmentVars(new HashMap<>(original.getStdioConfig().getEnvironmentVars()));
+            }
+            
+            copy.setStdioConfig(stdioConfig);
+        } else if (original.getConnectionType() == Constants.ConnectionType.SSE && original.getSseConfig() != null) {
+            SseConfig sseConfig = new SseConfig();
+            sseConfig.setServerUrl(original.getSseConfig().getServerUrl());
+            sseConfig.setAuthToken(original.getSseConfig().getAuthToken());
+            
+            if (original.getSseConfig().getCustomHeaders() != null) {
+                sseConfig.setCustomHeaders(new HashMap<>(original.getSseConfig().getCustomHeaders()));
+            }
+            
+            copy.setSseConfig(sseConfig);
+        }
+        
+        return copy;
     }
 }

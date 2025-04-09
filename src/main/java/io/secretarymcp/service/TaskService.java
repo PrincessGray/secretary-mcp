@@ -1,7 +1,7 @@
 package io.secretarymcp.service;
 
+import io.secretarymcp.model.ConnectionProfile;
 import io.secretarymcp.model.RemoteTask;
-import io.secretarymcp.model.Secretary;
 import io.secretarymcp.model.TaskTemplate;
 import io.secretarymcp.model.TemplateInfo;
 import io.secretarymcp.proxy.ProxyServer;
@@ -124,7 +124,6 @@ public class TaskService {
      * 激活任务
      */
     public Mono<RemoteTask> activateTask(String secretaryId, String taskId) {
-        // 获取任务
         return getTask(secretaryId, taskId)
                 .flatMap(task -> {
                     // 如果任务已经激活，直接返回
@@ -134,8 +133,8 @@ public class TaskService {
                     
                     log.info("激活任务: {}/{}", secretaryId, taskId);
                     
-                    // 创建上游客户端配置
-                    UpstreamClientConfig config = buildClientConfig(task);
+                    // 使用静态工厂方法
+                    UpstreamClientConfig config = UpstreamClientConfig.fromRemoteTask(task);
                     
                     // 使用代理服务器添加上游客户端
                     return proxyServer.addUpstreamClient(config)
@@ -237,7 +236,32 @@ public class TaskService {
     }
     
     /**
+     * 应用自定义连接参数
+     */
+    public Mono<RemoteTask> applyCustomParams(
+            String secretaryId, 
+            String taskId, 
+            Map<String, Object> customParams) {
+        
+        return getTask(secretaryId, taskId)
+                .flatMap(task -> {
+                    // 任务已激活则不能修改参数
+                    if (task.getStatus() == Constants.TaskStatus.ACTIVE) {
+                        return Mono.error(new IllegalStateException("不能修改激活状态的任务参数"));
+                    }
+                    
+                    // 应用自定义参数（使用新的applyCustomParams方法）
+                    task.applyCustomParams(customParams);
+                    
+                    // 保存任务
+                    return storage.saveTask(secretaryId, task)
+                            .thenReturn(task);
+                });
+    }
+    
+    /**
      * 更新任务配置
+     * 注意：此方法仅更新通用配置，不会修改连接特定配置
      */
     public Mono<RemoteTask> updateTaskConfig(String secretaryId, String taskId, Map<String, Object> configUpdates) {
         return getTask(secretaryId, taskId)
@@ -252,58 +276,27 @@ public class TaskService {
     }
     
     /**
-     * 应用自定义连接参数
+     * 更新任务连接配置
+     * 此方法允许直接更新连接配置的特定部分
      */
-    public Mono<RemoteTask> applyCustomConnectionParams(
-            String secretaryId, 
-            String taskId, 
-            Map<String, Object> customParams) {
+    public Mono<RemoteTask> updateConnectionConfig(
+            String secretaryId,
+            String taskId,
+            ConnectionProfile connectionProfile) {
         
         return getTask(secretaryId, taskId)
                 .flatMap(task -> {
-                    // 任务已激活则不能修改连接参数
+                    // 任务已激活则不能修改连接配置
                     if (task.getStatus() == Constants.TaskStatus.ACTIVE) {
-                        return Mono.error(new IllegalStateException("不能修改激活状态的任务连接参数"));
+                        return Mono.error(new IllegalStateException("不能修改激活状态的任务连接配置"));
                     }
                     
-                    // 应用自定义连接参数
-                    task.applyCustomConnectionParams(customParams);
+                    // 设置新的连接配置
+                    task.setConnectionProfile(connectionProfile);
                     
                     // 保存任务
                     return storage.saveTask(secretaryId, task)
                             .thenReturn(task);
                 });
-    }
-    
-    /**
-     * 根据任务构建上游客户端配置
-     */
-    private UpstreamClientConfig buildClientConfig(RemoteTask task) {
-        // 实现从RemoteTask转换为UpstreamClientConfig的逻辑
-        // 可以参考UpstreamClientConfig的结构和RemoteTask中的数据
-        
-        UpstreamClientConfig.ConnectionType connectionType = 
-                task.getConnectionType() == Constants.TaskType.STDIO ? 
-                UpstreamClientConfig.ConnectionType.STDIO : 
-                UpstreamClientConfig.ConnectionType.SSE;
-        
-        UpstreamClientConfig.Builder builder = UpstreamClientConfig.builder()
-                .taskId(task.getId())
-                .taskName(task.getName())
-                .connectionType(connectionType);
-        
-        // 添加连接参数
-        Map<String, Object> connectionParams = task.getConnectionParams();
-        if (connectionParams != null) {
-            // 根据连接类型添加特定参数...
-        }
-        
-        // 添加配置参数
-        Map<String, Object> config = task.getConfig();
-        if (config != null) {
-            // 添加配置...
-        }
-        
-        return builder.build();
     }
 }

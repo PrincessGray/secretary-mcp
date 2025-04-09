@@ -1,7 +1,8 @@
 package io.secretarymcp.web;
 
-import io.secretarymcp.model.RemoteTask;
+import io.secretarymcp.model.*;
 import io.secretarymcp.service.TaskService;
+import io.secretarymcp.util.Constants;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -125,22 +126,117 @@ public class TaskController {
     }
     
     /**
-     * 应用自定义连接参数
+     * 应用自定义参数
      */
-    @PutMapping("/{taskId}/connection")
-    public Mono<RemoteTask> applyCustomConnectionParams(
+    @PutMapping("/{taskId}/customParams")
+    public Mono<RemoteTask> applyCustomParams(
             @PathVariable String taskId,
             @RequestParam String secretaryId,
             @RequestBody Map<String, Object> customParams) {
         
-        return taskService.applyCustomConnectionParams(secretaryId, taskId, customParams)
+        return taskService.applyCustomParams(secretaryId, taskId, customParams)
                 .onErrorResume(e -> {
-                    log.error("应用自定义连接参数失败: {}", e.getMessage());
+                    log.error("应用自定义参数失败: {}", e.getMessage());
                     return Mono.error(new ResponseStatusException(
-                            HttpStatus.INTERNAL_SERVER_ERROR, "应用自定义连接参数失败: " + e.getMessage()));
+                            HttpStatus.INTERNAL_SERVER_ERROR, "应用自定义参数失败: " + e.getMessage()));
                 });
     }
     
+    /**
+     * 更新连接配置
+     */
+    @PutMapping("/{taskId}/connectionProfile")
+    public Mono<RemoteTask> updateConnectionProfile(
+            @PathVariable String taskId,
+            @RequestParam String secretaryId,
+            @RequestBody ConnectionProfile connectionProfile) {
+        
+        return taskService.updateConnectionConfig(secretaryId, taskId, connectionProfile)
+                .onErrorResume(e -> {
+                    log.error("更新连接配置失败: {}", e.getMessage());
+                    return Mono.error(new ResponseStatusException(
+                            HttpStatus.INTERNAL_SERVER_ERROR, "更新连接配置失败: " + e.getMessage()));
+                });
+    }
+    
+    /**
+     * 更新STDIO连接配置
+     */
+    @PutMapping("/{taskId}/stdio-config")
+    public Mono<RemoteTask> updateStdioConfig(
+            @PathVariable String taskId,
+            @RequestParam String secretaryId,
+            @RequestBody StdioConfig stdioConfig) {
+        
+        return taskService.getTask(secretaryId, taskId)
+                .flatMap(task -> {
+                    if (task.getConnectionProfile().getConnectionType() != Constants.ConnectionType.STDIO) {
+                        return Mono.error(new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST, "只能为STDIO连接类型的任务更新STDIO配置"));
+                    }
+                    
+                    task.getConnectionProfile().setStdioConfig(stdioConfig);
+                    return taskService.updateConnectionConfig(secretaryId, taskId, task.getConnectionProfile());
+                })
+                .onErrorResume(e -> {
+                    if (e instanceof ResponseStatusException) {
+                        return Mono.error(e);
+                    }
+                    log.error("更新STDIO配置失败: {}", e.getMessage());
+                    return Mono.error(new ResponseStatusException(
+                            HttpStatus.INTERNAL_SERVER_ERROR, "更新STDIO配置失败: " + e.getMessage()));
+                });
+    }
+    
+    /**
+     * 更新SSE连接配置
+     */
+    @PutMapping("/{taskId}/sse-config")
+    public Mono<RemoteTask> updateSseConfig(
+            @PathVariable String taskId,
+            @RequestParam String secretaryId,
+            @RequestBody SseConfig sseConfig) {
+        
+        return taskService.getTask(secretaryId, taskId)
+                .flatMap(task -> {
+                    if (task.getConnectionProfile().getConnectionType() != Constants.ConnectionType.SSE) {
+                        return Mono.error(new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST, "只能为SSE连接类型的任务更新SSE配置"));
+                    }
+                    
+                    task.getConnectionProfile().setSseConfig(sseConfig);
+                    return taskService.updateConnectionConfig(secretaryId, taskId, task.getConnectionProfile());
+                })
+                .onErrorResume(e -> {
+                    if (e instanceof ResponseStatusException) {
+                        return Mono.error(e);
+                    }
+                    log.error("更新SSE配置失败: {}", e.getMessage());
+                    return Mono.error(new ResponseStatusException(
+                            HttpStatus.INTERNAL_SERVER_ERROR, "更新SSE配置失败: " + e.getMessage()));
+                });
+    }
+    
+    /**
+     * 更新通用配置
+     */
+    @PutMapping("/{taskId}/general-config")
+    public Mono<RemoteTask> updateGeneralConfig(
+            @PathVariable String taskId,
+            @RequestParam String secretaryId,
+            @RequestBody GeneralConfig generalConfig) {
+        
+        return taskService.getTask(secretaryId, taskId)
+                .flatMap(task -> {
+                    task.getConnectionProfile().setGeneralConfig(generalConfig);
+                    return taskService.updateConnectionConfig(secretaryId, taskId, task.getConnectionProfile());
+                })
+                .onErrorResume(e -> {
+                    log.error("更新通用配置失败: {}", e.getMessage());
+                    return Mono.error(new ResponseStatusException(
+                            HttpStatus.INTERNAL_SERVER_ERROR, "更新通用配置失败: " + e.getMessage()));
+                });
+    }
 
     /**
      * 创建任务的请求对象
@@ -151,6 +247,5 @@ public class TaskController {
         private String secretaryId;
         private String templateId;
         private String name;
-
     }
 }
