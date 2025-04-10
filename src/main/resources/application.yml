@@ -15,8 +15,15 @@ spring:
   threads:
     virtual:
       enabled: true
+  web:
+    resources:
+          static-locations: classpath:/static/
+
 
 # 调整Netty相关配置以配合虚拟线程使用
 reactor:
   netty:
-    ioWorkerCount: 4  # 减少IO线程数，因为虚拟线程会处理大部分IO
+    ioWorkerCount: 8  # 减少IO线程数，因为虚拟线程会处理大部分IO
+
+server:
+  port: 8080

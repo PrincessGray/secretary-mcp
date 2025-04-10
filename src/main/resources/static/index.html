@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP秘书系统 - 首页</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 18px;
+            margin-bottom: 30px;
+        }
+        .card-container {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        .card {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+            width: 300px;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        }
+        .card-header {
+            padding: 20px;
+            background-color: #4CAF50;
+            color: white;
+        }
+        .card-header h2 {
+            margin: 0;
+            font-size: 22px;
+        }
+        .card-body {
+            padding: 20px;
+        }
+        .card-desc {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+        .card-link {
+            display: block;
+            text-align: center;
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        .card-link:hover {
+            background-color: #45a049;
+        }
+        .footer {
+            margin-top: 50px;
+            text-align: center;
+            color: #888;
+            font-size: 14px;
+        }
+        .logo {
+            max-width: 120px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>MCP秘书系统</h1>
+        <p class="subtitle">基于模型上下文协议的自动化秘书管理平台</p>
+    </div>
+
+    <div class="card-container">
+        <div class="card">
+            <div class="card-header">
+                <h2>秘书任务管理器</h2>
+            </div>
+            <div class="card-body">
+                <p class="card-desc">管理您的秘书和自动化任务。创建、激活、配置和监控各类秘书任务，实现工作流程自动化。</p>
+                <a href="secretary_manager.html" class="card-link">进入秘书管理器</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>模板管理器</h2>
+            </div>
+            <div class="card-body">
+                <p class="card-desc">创建和管理任务模板。定义任务类型、参数配置和连接方式，为秘书提供标准化任务模板。</p>
+                <a href="template_manager.html" class="card-link">进入模板管理器</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>MCP秘书系统 &copy; 2024 | Model Context Protocol</p>
+    </div>
+</body>
+</html>
