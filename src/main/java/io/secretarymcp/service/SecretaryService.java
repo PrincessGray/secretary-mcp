@@ -70,13 +70,29 @@ public class SecretaryService {
                         return Mono.just(secretary);
                     }
                     
-                    // 设置激活状态
-                    secretary.activate();
-                    
-                    // 保存更新
-                    return storage.saveSecretary(secretary)
-                            .thenReturn(secretary);
+                    // 1. 先停用所有其他秘书
+                    return deactivateAllOtherSecretaries(secretaryId)
+                            .then(Mono.defer(() -> {
+                                // 2. 设置当前秘书为激活状态
+                                secretary.activate();
+                                
+                                // 3. 保存秘书状态
+                                return storage.saveSecretary(secretary)
+                                        // 4. 激活该秘书的所有任务
+                                        .then(taskService.activateAllTasks(secretaryId))
+                                        .thenReturn(secretary);
+                            }));
                 });
+    }
+    
+    /**
+     * 停用除指定秘书外的所有秘书
+     */
+    private Mono<Void> deactivateAllOtherSecretaries(String exceptSecretaryId) {
+        return listSecretaries()
+                .filter(secretaryInfo -> secretaryInfo.isActive() && !secretaryInfo.getId().equals(exceptSecretaryId))
+                .flatMap(secretaryInfo -> deactivateSecretary(secretaryInfo.getId()))
+                .then();
     }
     
     /**

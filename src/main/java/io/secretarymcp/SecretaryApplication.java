@@ -53,7 +53,7 @@ public class SecretaryApplication {
         // 创建应用上下文
         ConfigurableApplicationContext context = SpringApplication.run(SecretaryApplication.class, args);
         
-        if (!stdioMode) {
+        if (stdioMode) {
             log.info("以stdio模式启动");
             
             // 获取应用实例

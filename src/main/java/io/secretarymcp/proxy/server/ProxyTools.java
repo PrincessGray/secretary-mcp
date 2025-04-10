@@ -39,7 +39,18 @@ public class ProxyTools {
         return ProxyToolConfig.builder()
                 .name(STR."\{Constants.Mcp.TOOL_PREFIX}system.status")
                 .description("获取代理系统状态信息")
+                .inputSchema(createEmptySchema())
                 .build();
+    }
+    
+    // 创建一个空的输入模式
+    private static McpSchema.JsonSchema createEmptySchema() {
+        return new McpSchema.JsonSchema(
+            "object",                    // type
+            Map.of(),                    // 空的properties
+            List.of(),                   // 空的required
+            false                        // 不允许additionalProperties
+        );
     }
     
     /**
@@ -49,7 +60,7 @@ public class ProxyTools {
         Tool tool = new Tool(
                 createSystemStatusTool().getName(),
                 createSystemStatusTool().getDescription(),
-                (McpSchema.JsonSchema) null
+                createSystemStatusTool().getInputSchema()
         );
         
         return new McpServerFeatures.AsyncToolSpecification(

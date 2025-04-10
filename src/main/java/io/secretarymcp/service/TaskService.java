@@ -299,4 +299,13 @@ public class TaskService {
                             .thenReturn(task);
                 });
     }
+    
+    /**
+     * 激活秘书的所有任务
+     */
+    public Mono<Void> activateAllTasks(String secretaryId) {
+        return storage.listTasks(secretaryId)
+                .flatMap(task -> activateTask(secretaryId, task.getId()))
+                .then();
+    }
 }

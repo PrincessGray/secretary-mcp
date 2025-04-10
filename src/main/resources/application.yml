@@ -18,7 +18,8 @@ spring:
   web:
     resources:
           static-locations: classpath:/static/
-
+  main:
+    banner-mode: off
 
 # 调整Netty相关配置以配合虚拟线程使用
 reactor:
@@ -27,3 +28,21 @@ reactor:
 
 server:
   port: 8080
+
+# 全局禁用控制台日志输出
+logging:
+  # 将日志输出到文件
+  file:
+    name: logs/secretary-mcp.log
+    max-size: 10MB
+    max-history: 10
+  # 设置日志模式
+  pattern:
+    # 空控制台模式，不输出任何内容到控制台
+    console: ""
+    # 文件日志格式
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  # 日志级别
+  level:
+    root: INFO
+    io.secretarymcp: INFO
