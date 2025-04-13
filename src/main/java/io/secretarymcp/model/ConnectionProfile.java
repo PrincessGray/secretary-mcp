@@ -8,7 +8,7 @@ import lombok.Data;
 public class ConnectionProfile {
     // 使用Constants中的统一定义
     private Constants.ConnectionType connectionType = Constants.ConnectionType.SSE;
-    private int connectionTimeoutSeconds = 60;
+    private int connectionTimeoutSeconds = 120;
     
     // 新的配置对象
     private StdioConfig stdioConfig;

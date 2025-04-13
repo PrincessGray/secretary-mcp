@@ -70,6 +70,58 @@ public class RemoteTask {
         // 深拷贝ConnectionProfile
         task.setConnectionProfile(deepCopy(template.getConnectionProfile()));
         
+        // 处理所有可定制参数 - 这是新增的部分
+        if (task.customizableParams != null) {
+            for (TaskTemplate.ConfigParam param : task.customizableParams) {
+                if (param.getDefaultValue() == null) {
+                    continue;
+                }
+                
+                String value = String.valueOf(param.getDefaultValue());
+                
+                // 根据参数类别和名称进行处理
+                switch (param.getCategory()) {
+                    case STDIO_ENV:
+                        task.applyStdioEnvParam(param.getName(), value);
+                        break;
+                    case STDIO_ARG:
+                        task.applyStdioArgParam(param, Boolean.parseBoolean(value));
+                        break;
+                    case SSE_AUTH_PARAM:
+                        // 根据参数名称进行特殊处理
+                        if ("apiKey".equals(param.getName())) {
+                            // apiKey处理为认证令牌
+                            task.getConnectionProfile().getSseConfig().setAuthToken(value);
+                        } else if ("url".equals(param.getName()) || 
+                                   param.getName().toLowerCase().contains("url")) {
+                            // URL参数处理
+                            SseConfig sseConfig = task.getConnectionProfile().getSseConfig();
+                            if (value.startsWith("http://") || value.startsWith("https://")) {
+                                // 完整URL直接替换
+                                sseConfig.setServerUrl(value);
+                            } else {
+                                // 否则作为查询参数
+                                String currentUrl = sseConfig.getServerUrl();
+                                String paramName = param.getName();
+                                if (paramName.startsWith("url:")) {
+                                    paramName = paramName.substring(4);
+                                }
+                                
+                                if (currentUrl.contains("?")) {
+                                    sseConfig.setServerUrl(currentUrl + "&" + paramName + "=" + value);
+                                } else {
+                                    sseConfig.setServerUrl(currentUrl + "?" + paramName + "=" + value);
+                                }
+                            }
+                        } else {
+                            // 其他参数作为HTTP头
+                            task.applySseAuthParam(param.getName(), value);
+                        }
+                        break;
+                }
+            }
+        }
+        
         return task;
     }
     
@@ -148,11 +200,41 @@ public class RemoteTask {
             connectionProfile.getConnectionType() == Constants.ConnectionType.SSE &&
             connectionProfile.getSseConfig() != null) {
                 
-            // 如果是apiKey，设置为authToken
+            // 使用与TaskTemplate.addSseAuthParam相同的逻辑
             if ("apiKey".equals(name)) {
+                // 如果是apiKey，设置为认证令牌
                 connectionProfile.getSseConfig().setAuthToken(value);
+            } 
+            else if ("url".equals(name) || name.toLowerCase().contains("url")) {
+                // 如果参数名是"url"或包含"url"，处理为URL参数
+                if (value.startsWith("http://") || value.startsWith("https://")) {
+                    // 如果是完整URL，直接替换
+                    connectionProfile.getSseConfig().setServerUrl(value);
+                } else {
+                    // 否则作为查询参数添加
+                    String currentUrl = connectionProfile.getSseConfig().getServerUrl();
+                    String paramName = name.startsWith("url:") ? name.substring(4) : name;
+                    
+                    // 检查URL是否已经包含参数
+                    if (currentUrl.contains("?")) {
+                        // 已经有参数，添加新参数
+                        connectionProfile.getSseConfig().setServerUrl(currentUrl + "&" + paramName + "=" + value);
+                    } else {
+                        // 没有参数，添加第一个参数
+                        connectionProfile.getSseConfig().setServerUrl(currentUrl + "?" + paramName + "=" + value);
+                    }
+                }
+            }
+            else if (name.startsWith("header:")) {
+                // 如果以header:开头，添加为HTTP头部
+                String headerName = name.substring(7); // 移除"header:"前缀
+                
+                if (connectionProfile.getSseConfig().getCustomHeaders() == null) {
+                    connectionProfile.getSseConfig().setCustomHeaders(new HashMap<>());
+                }
+                connectionProfile.getSseConfig().getCustomHeaders().put(headerName, value);
             } else {
-                // 否则设置为自定义头
+                // 对于其他参数，添加到自定义标头中
                 if (connectionProfile.getSseConfig().getCustomHeaders() == null) {
                     connectionProfile.getSseConfig().setCustomHeaders(new HashMap<>());
                 }
@@ -218,10 +300,15 @@ public class RemoteTask {
      * 获取API密钥参数
      */
     public TaskTemplate.ConfigParam getApiKeyParam() {
-        List<TaskTemplate.ConfigParam> apiKeyParams = 
-            getConfigParamsByCategory(TaskTemplate.ConfigParam.ConfigParamCategory.SSE_AUTH_PARAM);
+        if (this.customizableParams == null) {
+            return null;
+        }
         
-        return apiKeyParams.isEmpty() ? null : apiKeyParams.getFirst();
+        return this.customizableParams.stream()
+                .filter(param -> "apiKey".equals(param.getName()) && 
+                      param.getCategory() == TaskTemplate.ConfigParam.ConfigParamCategory.SSE_AUTH_PARAM)
+                .findFirst()
+                .orElse(null);
     }
     
     /**

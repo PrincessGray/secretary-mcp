@@ -193,6 +193,11 @@ public class TaskTemplate {
     
     /**
      * 添加SSE认证参数
+     * 
+     * 说明：
+     * 1. 如果参数名为"apiKey"，则会自动设置为认证令牌
+     * 2. 所有其他参数将作为自定义头部添加
+     * 3. 如果需要配置URL参数，请在前端使用单独的界面或通过其他方法直接设置serverUrl
      */
     public void addSseAuthParam(String name, String displayName, String description, String defaultValue, boolean required) {
         if (getConnectionProfile().getConnectionType() != Constants.ConnectionType.SSE) {
@@ -200,7 +205,7 @@ public class TaskTemplate {
         }
         
         ConfigParam param = ConfigParam.builder()
-                .name(name)                // 使用传入的名称，而不是固定为"apiKey"
+                .name(name)
                 .displayName(displayName)
                 .description(description)
                 .type("string")
@@ -211,17 +216,20 @@ public class TaskTemplate {
         
         getCustomizableParams().add(param);
         
-        // 如果有默认值且参数名为apiKey，设置到SSE配置的authToken中
-        if (defaultValue != null && "apiKey".equals(name)) {
+        // 如果有默认值，只处理简单情况
+        if (defaultValue != null) {
             SseConfig sseConfig = getConnectionProfile().getSseConfig();
-            sseConfig.setAuthToken(defaultValue);
-        } else if (defaultValue != null) {
-            // 对于其他参数，添加到自定义标头中
-            SseConfig sseConfig = getConnectionProfile().getSseConfig();
-            if (sseConfig.getCustomHeaders() == null) {
-                sseConfig.setCustomHeaders(new HashMap<>());
+            
+            if ("apiKey".equals(name)) {
+                // 如果是apiKey，设置为认证令牌
+                sseConfig.setAuthToken(defaultValue);
+            } else {
+                // 所有其他参数，统一添加到自定义标头中
+                if (sseConfig.getCustomHeaders() == null) {
+                    sseConfig.setCustomHeaders(new HashMap<>());
+                }
+                sseConfig.getCustomHeaders().put(name, defaultValue);
             }
-            sseConfig.getCustomHeaders().put(name, defaultValue);
         }
     }
     

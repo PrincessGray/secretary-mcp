@@ -21,20 +21,17 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
- * 基于文件系统的存储实现（虚拟线程调度版本）
+ * 基于文件系统的存储实现（弹性线程池版本）
  */
 @Service
 public class FileSystemStorage {
     private static final Logger log = LoggerFactory.getLogger(FileSystemStorage.class);
     
-    // 创建虚拟线程调度器
-    private static final Scheduler VIRTUAL_THREADS = Schedulers.fromExecutor(
-        Executors.newVirtualThreadPerTaskExecutor()
-    );
+    // 弹性线程池，用于文件系统操作
+    private static final Scheduler ELASTIC_SCHEDULER = Schedulers.boundedElastic();
     
     @Value("${secretary.storage.base-dir}")
     private String baseDir;
@@ -44,23 +41,24 @@ public class FileSystemStorage {
      */
     public Mono<Void> initialize() {
         return Mono.fromCallable(() -> {
-            // 创建基础目录
-            Files.createDirectories(Path.of(baseDir));
-            
-            // 创建秘书目录
-            Files.createDirectories(Constants.PathsUtil.getSecretaryDir(baseDir));
-            
-            // 创建模板目录
-            Files.createDirectories(Constants.PathsUtil.getTemplatesDir(baseDir));
-            
-            log.info("存储系统初始化完成，基础目录: {}", baseDir);
-            return null;
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .onErrorMap(e -> {
-            log.error("存储系统初始化失败: {}", e.getMessage(), e);
-            return new RuntimeException("存储系统初始化失败", e);
-        }).then();
+                // 创建基础目录
+                Files.createDirectories(Path.of(baseDir));
+                
+                // 创建秘书目录
+                Files.createDirectories(Constants.PathsUtil.getSecretaryDir(baseDir));
+                
+                // 创建模板目录
+                Files.createDirectories(Constants.PathsUtil.getTemplatesDir(baseDir));
+                
+                log.info("存储系统初始化完成，基础目录: {}", baseDir);
+                return true;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorMap(e -> {
+                log.error("存储系统初始化失败: {}", e.getMessage(), e);
+                return new RuntimeException("存储系统初始化失败", e);
+            })
+            .then();
     }
     
     // ====== 秘书相关操作 ======
@@ -74,12 +72,19 @@ public class FileSystemStorage {
         }
         
         Path filePath = Constants.PathsUtil.getSecretaryFile(baseDir, secretary.getId());
-        return JsonUtils.saveToFileAsync(secretary, filePath, VIRTUAL_THREADS) // 传入虚拟线程调度器
-                .thenReturn(true)
-                .onErrorResume(e -> {
+        return ensureDirectoryExists(filePath.getParent())
+            .then(Mono.fromCallable(() -> {
+                try {
+                    String json = JsonUtils.toJson(secretary);
+                    Files.writeString(filePath, json);
+                    log.debug("保存秘书成功: {}", filePath);
+                    return true;
+                } catch (Exception e) {
                     log.error("保存秘书失败: {}", e.getMessage(), e);
-                    return Mono.just(false);
-                });
+                    return false;
+                }
+            }))
+            .subscribeOn(ELASTIC_SCHEDULER);
     }
     
     /**
@@ -87,7 +92,21 @@ public class FileSystemStorage {
      */
     public Mono<Secretary> loadSecretary(String secretaryId) {
         Path filePath = Constants.PathsUtil.getSecretaryFile(baseDir, secretaryId);
-        return JsonUtils.loadFromFileAsync(filePath, Secretary.class, VIRTUAL_THREADS); // 传入虚拟线程调度器
+        return Mono.fromCallable(() -> {
+                if (!Files.exists(filePath)) {
+                    return null;
+                }
+                
+                String content = Files.readString(filePath);
+                Secretary secretary = JsonUtils.fromJson(content, Secretary.class);
+                log.debug("加载秘书成功: {}", secretaryId);
+                return secretary;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("加载秘书失败: {}", secretaryId, e);
+                return Mono.empty();
+            });
     }
     
     /**
@@ -97,33 +116,33 @@ public class FileSystemStorage {
         Path secretaryDir = Path.of(baseDir, "secretaries", secretaryId);
         
         return Mono.fromCallable(() -> {
-            if (!Files.exists(secretaryDir)) {
-                return false;
-            }
-            
-            // 递归删除目录
-            Files.walkFileTree(secretaryDir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
+                if (!Files.exists(secretaryDir)) {
+                    return false;
                 }
                 
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.delete(dir);
-                    return FileVisitResult.CONTINUE;
-                }
+                // 递归删除目录
+                Files.walkFileTree(secretaryDir, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        Files.delete(file);
+                        return FileVisitResult.CONTINUE;
+                    }
+                    
+                    @Override
+                    public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                        Files.delete(dir);
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+                
+                log.info("已删除秘书: {}", secretaryId);
+                return true;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("删除秘书失败: {}", secretaryId, e);
+                return Mono.just(false);
             });
-            
-            log.info("已删除秘书: {}", secretaryId);
-            return true;
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .onErrorResume(e -> {
-            log.error("删除秘书失败: {}", secretaryId, e);
-            return Mono.just(false);
-        });
     }
     
     /**
@@ -133,26 +152,25 @@ public class FileSystemStorage {
         Path secretariesDir = Constants.PathsUtil.getSecretaryDir(baseDir);
         
         return Mono.fromCallable(() -> {
-            if (!Files.exists(secretariesDir)) {
-                return List.<Path>of();
-            }
-            
-            // 获取所有秘书目录
-            try (var stream = Files.list(secretariesDir)){
-                return stream
-                    .filter(Files::isDirectory)
-                    .collect(Collectors.toList());
-            }
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .flatMapMany(Flux::fromIterable)
-        .flatMap(dir -> {
-            String secretaryId = dir.getFileName().toString();
-            return loadSecretary(secretaryId);
-        })
-        .filter(Objects::nonNull);
+                if (!Files.exists(secretariesDir)) {
+                    return List.<Path>of();
+                }
+                
+                // 获取所有秘书目录
+                try (var stream = Files.list(secretariesDir)) {
+                    return stream
+                        .filter(Files::isDirectory)
+                        .collect(Collectors.toList());
+                }
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .flatMapMany(Flux::fromIterable)
+            .flatMap(dir -> {
+                String secretaryId = dir.getFileName().toString();
+                return loadSecretary(secretaryId);
+            })
+            .filter(Objects::nonNull);
     }
-
     
     // ====== 任务相关操作 ======
     
@@ -165,12 +183,19 @@ public class FileSystemStorage {
         }
         
         Path filePath = Constants.PathsUtil.getTaskFile(baseDir, secretaryId, task.getId());
-        return JsonUtils.saveToFileAsync(task, filePath, VIRTUAL_THREADS) // 传入虚拟线程调度器
-                .thenReturn(true)
-                .onErrorResume(e -> {
+        return ensureDirectoryExists(filePath.getParent())
+            .then(Mono.fromCallable(() -> {
+                try {
+                    String json = JsonUtils.toJson(task);
+                    Files.writeString(filePath, json);
+                    log.debug("保存任务成功: {}", filePath);
+                    return true;
+                } catch (Exception e) {
                     log.error("保存任务失败: {}", e.getMessage(), e);
-                    return Mono.just(false);
-                });
+                    return false;
+                }
+            }))
+            .subscribeOn(ELASTIC_SCHEDULER);
     }
     
     /**
@@ -178,7 +203,21 @@ public class FileSystemStorage {
      */
     public Mono<RemoteTask> loadTask(String secretaryId, String taskId) {
         Path filePath = Constants.PathsUtil.getTaskFile(baseDir, secretaryId, taskId);
-        return JsonUtils.loadFromFileAsync(filePath, RemoteTask.class, VIRTUAL_THREADS); // 传入虚拟线程调度器
+        return Mono.fromCallable(() -> {
+                if (!Files.exists(filePath)) {
+                    return null;
+                }
+                
+                String content = Files.readString(filePath);
+                RemoteTask task = JsonUtils.fromJson(content, RemoteTask.class);
+                log.debug("加载任务成功: {}/{}", secretaryId, taskId);
+                return task;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("加载任务失败: {}/{}", secretaryId, taskId, e);
+                return Mono.empty();
+            });
     }
     
     /**
@@ -188,33 +227,33 @@ public class FileSystemStorage {
         Path taskDir = Path.of(baseDir, "secretaries", secretaryId, "tasks", taskId);
         
         return Mono.fromCallable(() -> {
-            if (!Files.exists(taskDir)) {
-                return false;
-            }
-            
-            // 递归删除目录
-            Files.walkFileTree(taskDir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
+                if (!Files.exists(taskDir)) {
+                    return false;
                 }
                 
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.delete(dir);
-                    return FileVisitResult.CONTINUE;
-                }
+                // 递归删除目录
+                Files.walkFileTree(taskDir, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        Files.delete(file);
+                        return FileVisitResult.CONTINUE;
+                    }
+                    
+                    @Override
+                    public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                        Files.delete(dir);
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+                
+                log.info("已删除任务: {}/{}", secretaryId, taskId);
+                return true;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("删除任务失败: {}/{}", secretaryId, taskId, e);
+                return Mono.just(false);
             });
-            
-            log.info("已删除任务: {}/{}", secretaryId, taskId);
-            return true;
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .onErrorResume(e -> {
-            log.error("删除任务失败: {}/{}", secretaryId, taskId, e);
-            return Mono.just(false);
-        });
     }
     
     /**
@@ -224,24 +263,24 @@ public class FileSystemStorage {
         Path tasksDir = Constants.PathsUtil.getTasksDir(baseDir, secretaryId);
         
         return Mono.fromCallable(() -> {
-            if (!Files.exists(tasksDir)) {
-                return List.<Path>of();
-            }
-            
-            // 获取所有任务目录
-            try (var stream = Files.list(tasksDir)){
-                return stream
-                    .filter(Files::isDirectory)
-                    .collect(Collectors.toList());
-            }
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .flatMapMany(Flux::fromIterable)
-        .flatMap(dir -> {
-            String taskId = dir.getFileName().toString();
-            return loadTask(secretaryId, taskId);
-        })
-        .filter(Objects::nonNull);
+                if (!Files.exists(tasksDir)) {
+                    return List.<Path>of();
+                }
+                
+                // 获取所有任务目录
+                try (var stream = Files.list(tasksDir)) {
+                    return stream
+                        .filter(Files::isDirectory)
+                        .collect(Collectors.toList());
+                }
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .flatMapMany(Flux::fromIterable)
+            .flatMap(dir -> {
+                String taskId = dir.getFileName().toString();
+                return loadTask(secretaryId, taskId);
+            })
+            .filter(Objects::nonNull);
     }
     
     // ====== 模板相关操作 ======
@@ -255,18 +294,19 @@ public class FileSystemStorage {
         }
         
         Path filePath = Constants.PathsUtil.getTemplateFile(baseDir, template.getId());
-        return Mono.fromCallable(() -> {
-            // 确保目录存在
-            Files.createDirectories(filePath.getParent());
-            return filePath;
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .flatMap(path -> JsonUtils.saveToFileAsync(template, path, VIRTUAL_THREADS))
-        .thenReturn(true)
-        .onErrorResume(e -> {
-            log.error("保存模板失败: {}", e.getMessage(), e);
-            return Mono.just(false);
-        });
+        return ensureDirectoryExists(filePath.getParent())
+            .then(Mono.fromCallable(() -> {
+                try {
+                    String json = JsonUtils.toJson(template);
+                    Files.writeString(filePath, json);
+                    log.debug("保存模板成功: {}", filePath);
+                    return true;
+                } catch (Exception e) {
+                    log.error("保存模板失败: {}", e.getMessage(), e);
+                    return false;
+                }
+            }))
+            .subscribeOn(ELASTIC_SCHEDULER);
     }
     
     /**
@@ -274,7 +314,21 @@ public class FileSystemStorage {
      */
     public Mono<TaskTemplate> loadTemplate(String templateId) {
         Path filePath = Constants.PathsUtil.getTemplateFile(baseDir, templateId);
-        return JsonUtils.loadFromFileAsync(filePath, TaskTemplate.class, VIRTUAL_THREADS); // 传入虚拟线程调度器
+        return Mono.fromCallable(() -> {
+                if (!Files.exists(filePath)) {
+                    return null;
+                }
+                
+                String content = Files.readString(filePath);
+                TaskTemplate template = JsonUtils.fromJson(content, TaskTemplate.class);
+                log.debug("加载模板成功: {}", templateId);
+                return template;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("加载模板失败: {}", templateId, e);
+                return Mono.empty();
+            });
     }
     
     /**
@@ -284,60 +338,60 @@ public class FileSystemStorage {
         Path templateDir = Path.of(baseDir, "templates", templateId);
         
         return Mono.fromCallable(() -> {
-            if (!Files.exists(templateDir)) {
-                return false;
-            }
-            
-            // 递归删除目录
-            Files.walkFileTree(templateDir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
+                if (!Files.exists(templateDir)) {
+                    return false;
                 }
                 
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.delete(dir);
-                    return FileVisitResult.CONTINUE;
-                }
+                // 递归删除目录
+                Files.walkFileTree(templateDir, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        Files.delete(file);
+                        return FileVisitResult.CONTINUE;
+                    }
+                    
+                    @Override
+                    public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                        Files.delete(dir);
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+                
+                log.info("已删除模板: {}", templateId);
+                return true;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("删除模板失败: {}", templateId, e);
+                return Mono.just(false);
             });
-            
-            log.info("已删除模板: {}", templateId);
-            return true;
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .onErrorResume(e -> {
-            log.error("删除模板失败: {}", templateId, e);
-            return Mono.just(false);
-        });
     }
-
+    
     /**
      * 列出所有任务模板
      */
     public Flux<TaskTemplate> listTemplates() {
         Path templatesDir = Constants.PathsUtil.getTemplatesDir(baseDir);
-
+        
         return Mono.fromCallable(() -> {
-                    if (!Files.exists(templatesDir)) {
-                        return List.<Path>of();
-                    }
-
-                    // 使用try-with-resources确保流被关闭
-                    try (var stream = Files.list(templatesDir)) {
-                        return stream
-                                .filter(Files::isDirectory)
-                                .collect(Collectors.toList());
-                    }
-                })
-                .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-                .flatMapMany(Flux::fromIterable)
-                .flatMap(dir -> {
-                    String templateId = dir.getFileName().toString();
-                    return loadTemplate(templateId);
-                })
-                .filter(Objects::nonNull);
+                if (!Files.exists(templatesDir)) {
+                    return List.<Path>of();
+                }
+                
+                // 获取所有模板目录
+                try (var stream = Files.list(templatesDir)) {
+                    return stream
+                        .filter(Files::isDirectory)
+                        .collect(Collectors.toList());
+                }
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .flatMapMany(Flux::fromIterable)
+            .flatMap(dir -> {
+                String templateId = dir.getFileName().toString();
+                return loadTemplate(templateId);
+            })
+            .filter(Objects::nonNull);
     }
     
     /**
@@ -347,7 +401,7 @@ public class FileSystemStorage {
         return listSecretaries()
                 .map(SecretaryInfo::fromSecretary);
     }
-
+    
     /**
      * 列出所有任务模板的基本信息
      */
@@ -369,15 +423,11 @@ public class FileSystemStorage {
     public Mono<Void> createTaskSubDirectory(String secretaryId, String taskId, String subDirName) {
         Path dir = Path.of(getTaskWorkDir(secretaryId, taskId), subDirName);
         
-        return Mono.fromCallable(() -> {
-            Files.createDirectories(dir);
-            return null;
-        })
-        .subscribeOn(VIRTUAL_THREADS) // 使用虚拟线程调度器
-        .onErrorMap(e -> {
-            log.error("创建任务子目录失败: {}", dir, e);
-            return new RuntimeException("创建目录失败: " + dir, e);
-        }).then();
+        return ensureDirectoryExists(dir)
+            .onErrorMap(e -> {
+                log.error("创建任务子目录失败: {}", dir, e);
+                return new RuntimeException("创建目录失败: " + dir, e);
+            });
     }
     
     /**
@@ -386,7 +436,18 @@ public class FileSystemStorage {
     public Mono<Void> saveTaskFile(String secretaryId, String taskId, String fileName, String content) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.writeFileAsync(content, filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
+        return ensureDirectoryExists(filePath.getParent())
+            .then(Mono.fromCallable(() -> {
+                Files.writeString(filePath, content);
+                log.debug("写入文件成功: {}", filePath);
+                return true;
+            }))
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorMap(e -> {
+                log.error("写入文件失败: {}", filePath, e);
+                return new RuntimeException("写入文件失败: " + filePath, e);
+            })
+            .then();
     }
     
     /**
@@ -395,16 +456,30 @@ public class FileSystemStorage {
     public Mono<String> readTaskFile(String secretaryId, String taskId, String fileName) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.readFileAsStringAsync(filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
+        return Mono.fromCallable(() -> {
+                if (!Files.exists(filePath)) {
+                    return null;
+                }
+                
+                String content = Files.readString(filePath);
+                log.debug("读取文件成功: {}", filePath);
+                return content;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("读取文件失败: {}", filePath, e);
+                return Mono.empty();
+            });
     }
     
-        /**
+    /**
      * 检查任务文件是否存在
      */
     public Mono<Boolean> taskFileExists(String secretaryId, String taskId, String fileName) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.existsAsync(filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
+        return Mono.fromCallable(() -> Files.exists(filePath))
+            .subscribeOn(ELASTIC_SCHEDULER);
     }
     
     /**
@@ -413,6 +488,35 @@ public class FileSystemStorage {
     public Mono<Void> deleteTaskFile(String secretaryId, String taskId, String fileName) {
         Path filePath = Path.of(getTaskWorkDir(secretaryId, taskId), fileName);
         
-        return JsonUtils.deleteFileAsync(filePath, VIRTUAL_THREADS); // 传入虚拟线程调度器
+        return Mono.fromCallable(() -> {
+                if (Files.exists(filePath)) {
+                    Files.delete(filePath);
+                    log.debug("删除文件成功: {}", filePath);
+                }
+                return true;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorMap(e -> {
+                log.error("删除文件失败: {}", filePath, e);
+                return new RuntimeException("删除文件失败: " + filePath, e);
+            })
+            .then();
+    }
+    
+    /**
+     * 确保目录存在
+     * 辅助方法，用于创建目录
+     */
+    private Mono<Void> ensureDirectoryExists(Path directory) {
+        return Mono.fromCallable(() -> {
+                Files.createDirectories(directory);
+                return true;
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorMap(e -> {
+                log.error("创建目录失败: {}", directory, e);
+                return new RuntimeException("创建目录失败: " + directory, e);
+            })
+            .then();
     }
 }

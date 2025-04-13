@@ -8,6 +8,7 @@ import reactor.core.publisher.Mono;
  * 定义代理服务器的基本操作
  */
 public interface ProxyServer {
+
     /**
      * 初始化代理服务器
      * @return 操作结果

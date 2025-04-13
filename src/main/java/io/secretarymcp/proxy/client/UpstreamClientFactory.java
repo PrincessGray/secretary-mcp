@@ -24,6 +24,9 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.HashMap;
 
 /**
  * 上游客户端工厂，负责创建、缓存和管理不同类型的上游客户端
@@ -121,7 +124,7 @@ public class UpstreamClientFactory {
                                 log.debug("服务器版本: {}", client.getServerInfo().version());
                                 log.debug("协议版本: {}", result.protocolVersion());
                             })
-                            .thenReturn(new UpstreamClient(config.getTaskId(), config.getTaskName(), client, true));
+                            .thenReturn(new UpstreamClient(config.getTaskId(), config.getTaskName(), client, true, connectionProfile.getConnectionType()));
                 })
                 .onErrorResume(e -> {
                     log.error("创建上游客户端失败: {} (原因: {})", config.getTaskId(), e.getMessage());
@@ -156,33 +159,133 @@ public class UpstreamClientFactory {
             return Mono.error(new IllegalArgumentException("STDIO连接必须提供command"));
         }
         
+        String originalCommand = stdioConfig.getCommand();
+        List<String> originalArgs = stdioConfig.getCommandArgs() != null ? 
+                                  new ArrayList<>(stdioConfig.getCommandArgs()) : 
+                                  new ArrayList<>();
+        
+        // Windows系统特殊处理，使用cmd /c执行命令
+        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        String command;
+        List<String> args = new ArrayList<>();
+        
+        if (isWindows) {
+            log.info("Windows系统，将使用cmd /c执行命令: {} {}", originalCommand, 
+                    originalArgs.isEmpty() ? "" : String.join(" ", originalArgs));
+            command = "cmd";
+            args.add("/c");
+            args.add(originalCommand);
+            args.addAll(originalArgs);
+        } else {
+            command = originalCommand;
+            args = originalArgs;
+        }
+        
+        // 处理npx命令特殊情况
+        boolean isNpxCommand = command.toLowerCase().contains("npx") || 
+                              args.stream().anyMatch(arg -> arg.toLowerCase().contains("npx"));
+                              
+        if (isNpxCommand) {
+            log.info("检测到npx命令，添加--quiet参数减少非JSON输出");
+            
+            // 如果是通过cmd调用的npx
+            if (command.equalsIgnoreCase("cmd") && args.contains("/c")) {
+                // 找到npx所在的参数位置
+                int npxIndex = -1;
+                for (int i = 0; i < args.size(); i++) {
+                    if (args.get(i).toLowerCase().contains("npx")) {
+                        npxIndex = i;
+                        break;
+                    }
+                }
+                
+                if (npxIndex >= 0 && npxIndex < args.size() - 1) {
+                    // 在npx后面直接插入--quiet参数
+                    args.add(npxIndex + 1, "--quiet");
+                }
+            }
+            // 如果直接调用npx
+            else if (command.toLowerCase().contains("npx")) {
+                // 在参数开头添加--quiet
+                args.addFirst("--quiet");
+            }
+            
+            log.info("修改后的命令: {} {}", command, 
+                    args.isEmpty() ? "" : String.join(" ", args));
+        }
+        
+        log.info("创建STDIO传输层: {} -> {} {}", config.getTaskId(), command, 
+                args.isEmpty() ? "" : String.join(" ", args));
+        
+        // 记录环境变量
+        log.info("系统环境变量PATH={}", System.getenv("PATH"));
+        
+        // 保存最终命令和参数，用于lambda表达式
+        final String finalCommand = command;
+        final List<String> finalArgs = args;
+        
         return Mono.fromCallable(() -> {
-            log.info("创建STDIO传输层: {} -> {}", config.getTaskId(), stdioConfig.getCommand());
+            log.info("开始构建STDIO传输层参数: {} -> {} {}", 
+                    config.getTaskId(), finalCommand, 
+                    finalArgs.isEmpty() ? "" : String.join(" ", finalArgs));
             
-            // 创建服务器参数构建器
-            ServerParameters.Builder paramsBuilder = ServerParameters.builder(stdioConfig.getCommand());
-            
-            // 添加命令行参数
-            if (stdioConfig.getCommandArgs() != null && !stdioConfig.getCommandArgs().isEmpty()) {
-                paramsBuilder.args(stdioConfig.getCommandArgs());
-            }
-            
-            // 添加环境变量
-            if (stdioConfig.getEnvironmentVars() != null && !stdioConfig.getEnvironmentVars().isEmpty()) {
-                paramsBuilder.env(stdioConfig.getEnvironmentVars());
-            }
-            
-            // 通过环境变量传递工作目录
-            String workingDir = stdioConfig.getWorkingDir();
-            if (workingDir != null && !workingDir.isEmpty()) {
+            try {
+                // 创建服务器参数构建器
+                ServerParameters.Builder paramsBuilder = ServerParameters.builder(finalCommand);
+                
+                // 添加命令行参数
+                if (!finalArgs.isEmpty()) {
+                    log.info("命令行参数: {}", String.join(" ", finalArgs));
+                    paramsBuilder.args(finalArgs);
+                }
+                
+                // 添加环境变量
+                Map<String, String> envVars = new HashMap<>();
+                
+                // 复制原有环境变量
+                if (stdioConfig.getEnvironmentVars() != null && !stdioConfig.getEnvironmentVars().isEmpty()) {
+                    envVars.putAll(stdioConfig.getEnvironmentVars());
+                }
+                
+                // 确保包含PATH环境变量
+                if (!envVars.containsKey("PATH") && System.getenv("PATH") != null) {
+                    envVars.put("PATH", System.getenv("PATH"));
+                }
+                
+                // 确保包含APPDATA环境变量(Windows特有)
+                if (isWindows && !envVars.containsKey("APPDATA") && System.getenv("APPDATA") != null) {
+                    envVars.put("APPDATA", System.getenv("APPDATA"));
+                }
+                
+                if (!envVars.isEmpty()) {
+                    log.info("环境变量: {}", envVars);
+                    paramsBuilder.env(envVars);
+                }
+                
+                // 通过环境变量传递工作目录
+                String workingDir = stdioConfig.getWorkingDir();
+                if (workingDir == null || workingDir.isEmpty()) {
+                    // 如果未指定工作目录，使用当前目录
+                    workingDir = System.getProperty("user.dir");
+                    log.info("未指定工作目录，使用当前目录: {}", workingDir);
+                }
+                
+                log.info("工作目录: {}", workingDir);
                 paramsBuilder.addEnvVar("WORKING_DIR", workingDir);
+                
+                // 构建服务器参数
+                ServerParameters params = paramsBuilder.build();
+                log.info("STDIO传输层参数构建完成: {}", config.getTaskId());
+                
+                // 创建并返回传输层
+                return (McpClientTransport) new StdioClientTransport(params, objectMapper);
+            } catch (Exception e) {
+                log.error("创建STDIO传输层失败，详细错误: ", e);
+                throw e;
             }
-            
-            // 构建服务器参数并创建STDIO传输层
-            ServerParameters params = paramsBuilder.build();
-            return (McpClientTransport) new StdioClientTransport(params);
         })
-        .doOnError(e -> log.error("创建STDIO传输层失败: {}", e.getMessage()));
+        .doOnSuccess(transport -> log.info("STDIO传输层创建成功: {}", config.getTaskId()))
+        .doOnError(e -> log.error("创建STDIO传输层失败: {} (详细错误: {})", config.getTaskId(), e.getMessage(), e));
     }
     
     /**
@@ -197,11 +300,26 @@ public class UpstreamClientFactory {
         }
         
         return Mono.fromCallable(() -> {
-            log.info("创建SSE传输层: {} -> {}", config.getTaskId(), sseConfig.getServerUrl());
+            String serverUrl = sseConfig.getServerUrl();
+            
+            // 检查URL是否已包含/sse
+            boolean containsSsePath = serverUrl.contains("/sse");
+            
+            // 如果URL已包含/sse，则移除/sse部分以避免重复
+            String baseUrl;
+            if (containsSsePath) {
+                // 简单替换方法，移除/sse，保留查询参数
+                baseUrl = serverUrl.replace("/sse", "");
+                log.info("检测到URL已包含/sse，已移除: {}", baseUrl);
+            } else {
+                baseUrl = serverUrl;
+            }
+            
+            log.info("创建SSE传输层: {} -> {}", config.getTaskId(), baseUrl);
             
             // 创建WebClient构建器
             WebClient.Builder webClientBuilder = WebClient.builder()
-                    .baseUrl(sseConfig.getServerUrl());
+                    .baseUrl(baseUrl);
             
             // 添加自定义头部
             if (sseConfig.getCustomHeaders() != null) {
@@ -217,10 +335,15 @@ public class UpstreamClientFactory {
                 webClientBuilder.defaultHeader("Authorization", "Bearer " + sseConfig.getAuthToken());
             }
             
-            // 直接创建并返回SSE传输层，更简洁
-            return (McpClientTransport) new WebFluxSseClientTransport(webClientBuilder);
+            // 使用builder创建SSE传输层，设置重试策略
+            WebFluxSseClientTransport.Builder transportBuilder = WebFluxSseClientTransport.builder(webClientBuilder)
+                    .sseEndpoint("/sse");  // 使用默认端点
+                
+            // 创建并返回传输层
+            return (McpClientTransport) transportBuilder.build();
         })
-        .doOnError(e -> log.error("创建SSE传输层失败: {}", e.getMessage()));
+        .doOnSuccess(transport -> log.info("SSE传输层创建成功: {}", config.getTaskId()))
+        .doOnError(e -> log.error("创建SSE传输层失败: {} (详细错误: {})", config.getTaskId(), e.getMessage(), e));
     }
         
     /**
@@ -280,17 +403,22 @@ public class UpstreamClientFactory {
             }
         }));
 
-        // 配置资源变更消费者 - 简化为表达式lambda
+        // 配置资源变更消费者
         builder.resourcesChangeConsumer(resources ->
                 Mono.fromRunnable(() -> log.info("资源已更新，任务ID: {}，资源数量: {}",
                         config.getTaskId(), resources.size()))
         );
 
-        // 配置提示变更消费者 - 简化为表达式lambda
+        // 配置提示变更消费者
         builder.promptsChangeConsumer(prompts ->
                 Mono.fromRunnable(() -> log.info("提示已更新，任务ID: {}，提示数量: {}",
                         config.getTaskId(), prompts.size()))
         );
+        
+        // 记录SSE连接特殊处理
+        if (connectionProfile.getConnectionType() == Constants.ConnectionType.SSE) {
+            log.info("为SSE连接配置心跳机制，在客户端初始化后自动启动: {}", config.getTaskId());
+        }
         
         // 构建客户端
         return builder.build();

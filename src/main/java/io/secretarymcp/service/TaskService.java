@@ -87,19 +87,30 @@ public class TaskService {
         return storage.loadSecretary(secretaryId)
                 .switchIfEmpty(Mono.error(new IllegalArgumentException("秘书不存在: " + secretaryId)))
                 .flatMap(secretary -> {
-                    // 加载模板
-                    return getTemplate(templateId)
-                            .flatMap(template -> {
-                                // 创建任务
-                                RemoteTask task = RemoteTask.fromTemplate(template, secretaryId, name);
+                    // 检查任务名称是否已存在于此秘书下
+                    return storage.listTasks(secretaryId)
+                            .filter(task -> name.equals(task.getName()))
+                            .hasElements()
+                            .flatMap(nameExists -> {
+                                if (nameExists) {
+                                    return Mono.error(new IllegalArgumentException(
+                                            "任务名称在此秘书下已存在: " + name));
+                                }
                                 
-                                // 将任务添加到秘书
-                                secretary.addTask(task.getId());
-                                
-                                // 保存任务和更新秘书
-                                return storage.saveTask(secretaryId, task)
-                                        .then(storage.saveSecretary(secretary))
-                                        .thenReturn(task);
+                                // 加载模板
+                                return getTemplate(templateId)
+                                        .flatMap(template -> {
+                                            // 创建任务
+                                            RemoteTask task = RemoteTask.fromTemplate(template, secretaryId, name);
+                                            
+                                            // 将任务添加到秘书
+                                            secretary.addTask(task.getId());
+                                            
+                                            // 保存任务和更新秘书
+                                            return storage.saveTask(secretaryId, task)
+                                                    .then(storage.saveSecretary(secretary))
+                                                    .thenReturn(task);
+                                        });
                             });
                 });
     }
@@ -301,11 +312,24 @@ public class TaskService {
     }
     
     /**
-     * 激活秘书的所有任务
+     * 激活秘书的所有任务，使用串行方式避免冲突
      */
     public Mono<Void> activateAllTasks(String secretaryId) {
+        log.info("激活秘书的所有任务: {}", secretaryId);
+        
         return storage.listTasks(secretaryId)
-                .flatMap(task -> activateTask(secretaryId, task.getId()))
-                .then();
+                // 使用concatMap保证串行执行，避免并发冲突
+                .concatMap(task -> {
+                    log.info("依次激活任务: {}/{}", secretaryId, task.getId());
+                    // 注意参数顺序：taskId, secretaryId
+                    return activateTask(secretaryId, task.getId())
+                        .onErrorResume(e -> {
+                            log.error("任务激活失败，但将继续激活其他任务: {}/{} (错误: {})", 
+                                    secretaryId, task.getId(), e.getMessage());
+                            return Mono.empty(); // 继续下一个任务
+                        });
+                })
+                .then()
+                .doOnSuccess(v -> log.info("所有任务激活完成: {}", secretaryId));
     }
 }

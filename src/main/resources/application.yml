@@ -1,48 +1,67 @@
-# 保持原有配置
+# 基础配置 - 适用于所有模式
 io:
   secretarymcp:
     storage:
       base-dir: ${user.home}/secretary-data
-    # 其他配置保持不变
 
-# 添加兼容配置
+# 兼容配置
 secretary:
   storage:
     base-dir: ${io.secretarymcp.storage.base-dir}
 
-# 启用虚拟线程
-spring:
-  threads:
-    virtual:
-      enabled: true
-  web:
-    resources:
-          static-locations: classpath:/static/
-  main:
-    banner-mode: off
-
-# 调整Netty相关配置以配合虚拟线程使用
-reactor:
-  netty:
-    ioWorkerCount: 8  # 减少IO线程数，因为虚拟线程会处理大部分IO
-
+# 服务器基本配置
 server:
   port: 8080
 
-# 全局禁用控制台日志输出
+# 日志配置
 logging:
-  # 将日志输出到文件
   file:
     name: logs/secretary-mcp.log
     max-size: 10MB
     max-history: 10
-  # 设置日志模式
   pattern:
-    # 空控制台模式，不输出任何内容到控制台
     console: ""
-    # 文件日志格式
     file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
-  # 日志级别
   level:
     root: INFO
     io.secretarymcp: INFO
+
+# Spring基本配置 - 明确使用reactive
+spring:
+  profiles:
+    active: sse
+  threads:
+    virtual:
+      enabled: true
+  main:
+    banner-mode: off
+    web-application-type: reactive  # 明确设置为reactive
+  web:
+    resources:
+      static-locations: classpath:/static/
+
+# 调整Netty相关配置
+reactor:
+  netty:
+    ioWorkerCount: 8
+
+# MCP配置 - 默认使用SSE模式
+mcp:
+  transport: sse
+  sse:
+    endpoint: /sse
+
+# ----------------------------------------
+# STDIO模式配置 (仅在使用--stdio参数时激活)
+# ----------------------------------------
+---
+spring:
+  config:
+    activate:
+      on-profile: stdio
+  main:
+    web-application-type: none  # STDIO模式不需要web服务器
+
+# MCP配置 - STDIO模式
+mcp:
+  transport: stdio

@@ -11,61 +11,89 @@ import io.secretarymcp.proxy.client.UpstreamClientFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.server.RouterFunction;
+import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-import org.springframework.web.reactive.function.server.RouterFunction;
 
 import java.time.Duration;
 import java.util.ArrayList;
-
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
+
 /**
- * STDIO代理服务器
+ * SSE代理服务器
+ * 负责通过SSE协议为MCP客户端提供服务
  */
-@Component  // 添加此注解
-public class StdioProxyServer {
-    private static final Logger log = LoggerFactory.getLogger(StdioProxyServer.class);
+@Component
+@Profile("sse") // 只在SSE模式下激活
+@Configuration
+public class SseProxyServer {
+    private static final Logger log = LoggerFactory.getLogger(SseProxyServer.class);
     
-    // 对象映射器
+    // 对象映射器，用于JSON序列化/反序列化
     private final ObjectMapper objectMapper;
 
-    // 上游客户端工厂
+    // 上游客户端工厂，用于创建与上游服务的连接
     private final UpstreamClientFactory clientFactory;
     
-    // 上游客户端映射
+    // 从配置中获取SSE端点路径，默认为/sse
+    @Value("${mcp.sse.endpoint:/sse}")
+    private String sseEndpoint;
+    
+    // 存储活动的上游客户端，使用ConcurrentHashMap确保线程安全
     private final ConcurrentHashMap<String, UpstreamClient> upstreamClients = new ConcurrentHashMap<>();
     
-    // 初始化标志
+    // 初始化标志，使用AtomicBoolean确保线程安全
     private final AtomicBoolean initialized = new AtomicBoolean(false);
     
-    // MCP服务器
+    // MCP异步服务器实例
     private McpAsyncServer mcpServer;
     
-    // 工具管理器
+    // 代理工具管理器，处理工具注册和卸载
     private ProxyToolManager toolManager;
     
+    // 路由函数，用于处理HTTP请求
+    private RouterFunction<?> routerFunction;
+    
+    // Spring环境配置，用于读取配置属性
+    private final Environment environment;
+    
+    // 注入的WebFluxSseServerTransportProvider
+    private final WebFluxSseServerTransportProvider transportProvider;
+    
     /**
-     * 创建STDIO代理服务器
+     * 创建SSE代理服务器
+     * 
+     * @param objectMapper JSON处理器
+     * @param environment 环境配置
+     * @param transportProvider SSE传输提供者
      */
-    public StdioProxyServer(ObjectMapper objectMapper) {
+    public SseProxyServer(ObjectMapper objectMapper, Environment environment, WebFluxSseServerTransportProvider transportProvider) {
         this.objectMapper = objectMapper;
         this.clientFactory = new UpstreamClientFactory(objectMapper);
+        this.environment = environment;
+        this.transportProvider = transportProvider;
     }
 
     /**
      * 初始化代理服务器
+     * 创建MCP服务器实例并注册系统工具
+     * 
+     * @return 初始化完成的信号
      */
     public Mono<Void> initialize() {
+        // 确保只初始化一次
         if (initialized.compareAndSet(false, true)) {
-            log.info("初始化STDIO代理服务器");
+            log.info("初始化SSE代理服务器");
             
             // 创建MCP服务器
             return createMcpServer()
@@ -75,39 +103,83 @@ public class StdioProxyServer {
                         
                         // 注册系统工具
                         return toolManager.registerSystemTools(upstreamClients)
-                                // 初始化默认上游客户端（如果配置了）
-                                .doOnSuccess(v -> log.info("STDIO代理服务器初始化完成"))
+                                .doOnSuccess(v -> log.info("SSE代理服务器初始化完成"))
                                 .doOnError(e -> {
-                                    log.error("STDIO代理服务器初始化失败: {}", e.getMessage());
+                                    log.error("SSE代理服务器初始化失败: {}", e.getMessage(), e);
                                     initialized.set(false);
                                 });
+                    })
+                    .onErrorResume(e -> {
+                        log.error("SSE代理服务器初始化过程出错: {}", e.getMessage(), e);
+                        initialized.set(false);
+                        return Mono.error(e);
                     });
         } else {
-            return Mono.error(new IllegalStateException("代理服务器已经初始化"));
+            return Mono.empty(); // 已经初始化，直接返回空Mono而不是抛出错误
         }
     }
 
     /**
      * 创建MCP服务器
+     * 
+     * @return 创建好的MCP异步服务器
      */
     private Mono<McpAsyncServer> createMcpServer() {
-        log.info("创建MCP服务器");
-        
-        // 创建STDIO传输提供者
-        WebFluxSseServerTransportProvider transportProvider = new WebFluxSseServerTransportProvider(objectMapper, "/sse");
+        try {
+            // 获取当前服务器端口
+            String serverPort = environment.getProperty("server.port", "8080");
             
-        // 创建MCP服务器
-        McpAsyncServer asyncServer = McpServer.async(transportProvider)
-            .serverInfo("mcp-secretary", "0.1.0")
-            .capabilities(McpSchema.ServerCapabilities.builder()
-                .resources(false, true)
-                .tools(true)
-                .prompts(true)
-                .logging()
-                .build())
-            .build();
+            // 记录服务器信息
+            log.info("创建SSE MCP服务器，使用已注入的transportProvider");
+            
+            // 创建MCP服务器 - 使用注入的transportProvider
+            McpAsyncServer asyncServer = McpServer.async(transportProvider)
+                .serverInfo("mcp-secretary", "0.1.0")
+                .capabilities(McpSchema.ServerCapabilities.builder()
+                    .resources(false, true)
+                    .tools(true)
+                    .prompts(true)
+                    .logging()
+                    .build())
+                .build();
+            
+            return Mono.just(asyncServer);
+        } catch (Exception e) {
+            log.error("创建MCP服务器失败: {}", e.getMessage(), e);
+            return Mono.error(e);
+        }
+    }
+    
+    /**
+     * 获取SSE路由函数
+     * 如果服务器尚未初始化，则先初始化
+     */
+    public RouterFunction<?> sseRouterFunction() {
+        // 确保初始化完成
+        if (!initialized.get()) {
+            log.info("RouterFunction初始化中，确保SSE服务器已创建");
+            try {
+                initialize().block(Duration.ofSeconds(10));
+            } catch (Exception e) {
+                log.error("初始化过程中出错: {}", e.getMessage(), e);
+            }
+        }
         
-        return Mono.just(asyncServer);
+        if (routerFunction == null) {
+            throw new IllegalStateException("路由函数未创建");
+        }
+        
+        log.info("返回SSE路由函数: {}", routerFunction.getClass().getName());
+        return routerFunction;
+    }
+    
+    /**
+     * 检查服务器是否健康
+     * 
+     * @return 健康状态
+     */
+    public Mono<Boolean> isHealthy() {
+        return Mono.just(initialized.get() && mcpServer != null);
     }
 
     /**
@@ -150,7 +222,7 @@ public class StdioProxyServer {
      */
     public Mono<Void> addUpstreamClient(UpstreamClientConfig config) {
         if (!initialized.get()) {
-            return Mono.error(new IllegalStateException("代理服务器未初始化"));
+            return Mono.error(new IllegalStateException("SSE代理服务器未初始化"));
         }
         
         String taskId = config.getTaskId();
@@ -234,7 +306,7 @@ public class StdioProxyServer {
      */
     public Mono<Void> removeUpstreamClient(String taskId) {
         if (!initialized.get()) {
-            return Mono.error(new IllegalStateException("代理服务器未初始化"));
+            return Mono.error(new IllegalStateException("SSE代理服务器未初始化"));
         }
         
         UpstreamClient client = upstreamClients.get(taskId);
@@ -307,7 +379,7 @@ public class StdioProxyServer {
             return Mono.empty();
         }
         
-        log.info("关闭STDIO代理服务器");
+        log.info("关闭SSE代理服务器");
         
         initialized.set(false);
         
@@ -333,10 +405,10 @@ public class StdioProxyServer {
             return Mono.empty();
         }))
         .timeout(Duration.ofSeconds(5))
-        .doOnSuccess(v -> log.info("STDIO代理服务器已关闭"))
+        .doOnSuccess(v -> log.info("SSE代理服务器已关闭"))
         .onErrorResume(e -> {
-            log.error("关闭STDIO代理服务器出错: {}", e.getMessage());
-            return Mono.empty();
+            log.error("SSE服务器操作失败: {}", e.getMessage(), e);
+            return Mono.empty().then(Mono.error(new RuntimeException("SSE服务器错误", e)));
         });
     }
 
@@ -345,13 +417,12 @@ public class StdioProxyServer {
      */
     public Mono<Void> run() {
         if (!initialized.get()) {
-            return Mono.error(new IllegalStateException("代理服务器未初始化"));
+            return Mono.error(new IllegalStateException("SSE代理服务器未初始化"));
         }
         
-        log.info("STDIO代理服务器运行中...");
+        log.info("SSE代理服务器运行中...");
         
         // 这个方法主要用于保持服务器运行，直到收到关闭信号
         return Mono.never();
     }
 }
-
