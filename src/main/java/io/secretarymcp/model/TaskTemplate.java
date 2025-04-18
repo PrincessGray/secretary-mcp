@@ -2,6 +2,7 @@ package io.secretarymcp.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.secretarymcp.util.Constants;
+import io.secretarymcp.util.Constants.ManagementType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -50,6 +51,7 @@ public class TaskTemplate {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ConfigParam {
+
         private String name;           // 参数名称
         private String displayName;    // 显示名称
         private String description;    // 参数描述
@@ -94,7 +96,7 @@ public class TaskTemplate {
         
         return template;
     }
-    
+
     /**
      * 创建SSE连接模板
      */
@@ -115,7 +117,7 @@ public class TaskTemplate {
     /**
      * 创建STDIO连接模板
      */
-    public static TaskTemplate createStdioTemplate(String name, String description, String command) {
+    public static TaskTemplate createStdioTemplate(String name, String description, String command, ManagementType managementType) {
         TaskTemplate template = create(name, description, Constants.ConnectionType.STDIO);
         
         // 配置STDIO连接
@@ -123,12 +125,20 @@ public class TaskTemplate {
         stdioConfig.setCommand(command);
         stdioConfig.setCommandArgs(new ArrayList<>());
         stdioConfig.setEnvironmentVars(new HashMap<>());
+        stdioConfig.setManagementType(managementType != null ? managementType : ManagementType.NPX);
         
         // 添加默认配置
         template.setDefaultConfigValue("enableRoots", false);
         template.setDefaultConfigValue("enableSampling", false);
         
         return template;
+    }
+    
+    /**
+     * 重载的创建STDIO连接模板方法（向后兼容）
+     */
+    public static TaskTemplate createStdioTemplate(String name, String description, String command) {
+        return createStdioTemplate(name, description, command, ManagementType.NPX);
     }
     
     /**

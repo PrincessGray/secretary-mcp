@@ -101,7 +101,7 @@ public class TaskService {
                                 return getTemplate(templateId)
                                         .flatMap(template -> {
                                             // 创建任务
-                                            RemoteTask task = RemoteTask.fromTemplate(template, secretaryId, name);
+                                            RemoteTask task = RemoteTask.fromTemplate(template, secretaryId,secretary.getName(), name);
                                             
                                             // 将任务添加到秘书
                                             secretary.addTask(task.getId());

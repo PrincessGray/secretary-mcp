@@ -9,7 +9,6 @@ import io.secretarymcp.model.StdioConfig;
 import io.secretarymcp.util.Constants;
 import lombok.Data;
 import reactor.core.publisher.Mono;
-
 import java.util.function.Function;
 
 /**
@@ -20,7 +19,8 @@ public class UpstreamClientConfig {
     // 任务标识
     private String taskId;            // 任务ID（内部使用）
     private String taskName;          // 任务名称（对用户友好）
-    
+    private String secretaryName;     // Secretary名称
+
     // 使用统一的ConnectionProfile替代分散的连接配置
     private ConnectionProfile connectionProfile;
     
@@ -52,10 +52,15 @@ public class UpstreamClientConfig {
         if (task.getConnectionProfile() == null) {
             throw new IllegalArgumentException("任务连接配置不能为空");
         }
+
+        if (task.getSecretaryName() == null || task.getSecretaryName().isEmpty()) {
+            throw new IllegalArgumentException("任务Secretary名称不能为空");
+        }
         
         UpstreamClientConfig config = new UpstreamClientConfig();
         config.setTaskId(task.getId());
         config.setTaskName(task.getName() != null ? task.getName() : task.getId());
+        config.setSecretaryName(task.getSecretaryName());
         
         // 复制ConnectionProfile (深拷贝)
         ConnectionProfile originalProfile = task.getConnectionProfile();

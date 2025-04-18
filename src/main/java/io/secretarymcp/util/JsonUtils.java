@@ -2,6 +2,7 @@ package io.secretarymcp.util;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -9,20 +10,13 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.io.buffer.DataBuffer;
-import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
-
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Map;
 
 /**
@@ -93,6 +87,18 @@ public class JsonUtils {
         } catch (JsonProcessingException e) {
             log.error("JSON转Map失败: {}", e.getMessage(), e);
             throw new RuntimeException("JSON转Map失败", e);
+        }
+    }
+    
+    /**
+     * 将JSON字符串转换为对象，使用TypeReference
+     */
+    public static <T> T fromJson(String json, TypeReference<T> typeReference) {
+        try {
+            return objectMapper.readValue(json, typeReference);
+        } catch (JsonProcessingException e) {
+            log.error("反序列化JSON失败: {}", e.getMessage(), e);
+            throw new RuntimeException("反序列化JSON失败", e);
         }
     }
     

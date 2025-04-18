@@ -52,7 +52,7 @@ public class ProxyToolManager {
     /**
      * 为任务注册代理工具
      */
-    public Mono<Void> registerTaskProxyTools(String taskId, String taskName, List<Tool> tools, UpstreamClient client) {
+    public Mono<Void> registerTaskProxyTools(String secretaryName,String taskId, String taskName, List<Tool> tools, UpstreamClient client) {
         log.info("注册任务代理工具: {}, 工具数量: {}", taskName, tools.size());
         
         List<McpServerFeatures.AsyncToolSpecification> toolSpecs = new ArrayList<>();
@@ -64,7 +64,7 @@ public class ProxyToolManager {
             
             // 创建工具规范
             McpServerFeatures.AsyncToolSpecification toolSpec = 
-                    ProxyTools.createProxyToolSpec(taskId, taskName, tool, client);
+                    ProxyTools.createProxyToolSpec(secretaryName,taskId, taskName, tool, client);
             
             toolSpecs.add(toolSpec);
             toolNames.add(proxyToolName);

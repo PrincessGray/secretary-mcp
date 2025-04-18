@@ -30,6 +30,7 @@ public class RemoteTask {
     private String name;
     private String description;
     private String secretaryId;
+    private String secretaryName;
     private String templateId;
     private TaskStatus status;
     private LocalDateTime createdAt;
@@ -50,7 +51,7 @@ public class RemoteTask {
     /**
      * 从模板创建任务
      */
-    public static RemoteTask fromTemplate(TaskTemplate template, String secretaryId, String name) {
+    public static RemoteTask fromTemplate(TaskTemplate template, String secretaryId, String secretaryName, String name) {
         String taskName = name != null && !name.isBlank() ? name : template.getName();
         
         RemoteTask task = RemoteTask.builder()
@@ -58,6 +59,7 @@ public class RemoteTask {
                 .name(taskName)
                 .description(template.getDescription())
                 .secretaryId(secretaryId)
+                .secretaryName(secretaryName)
                 .templateId(template.getId())
                 .status(TaskStatus.INACTIVE)
                 .customizableParams(new ArrayList<>(template.getCustomizableParams()))

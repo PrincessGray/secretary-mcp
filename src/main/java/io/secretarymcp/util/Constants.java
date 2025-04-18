@@ -55,6 +55,29 @@ public class Constants {
         }
     }
     
+    // 包管理方式
+    @Getter
+    public enum ManagementType {
+        NPX("npx"),        // 使用NPX管理
+        UVX("uvx");        // 使用UVX管理
+        
+        
+        private final String value;
+        
+        ManagementType(String value) {
+            this.value = value;
+        }
+
+        public static ManagementType fromValue(String value) {
+            for (ManagementType type : ManagementType.values()) {
+                if (type.value.equals(value)) {
+                    return type;
+                }
+            }
+            return NPX; // 默认使用NPX
+        }
+    }
+    
     // 文件路径常量
     public static class PathsUtil {
         // 秘书相关路径

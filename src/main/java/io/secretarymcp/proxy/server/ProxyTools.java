@@ -11,7 +11,6 @@ import lombok.Data;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
-
 import java.util.List;
 import java.util.Map;
 
@@ -86,14 +85,20 @@ public class ProxyTools {
         );
     }
 
+
     /**
      * 为上游工具创建代理工具规范
+     * @param secretaryName Secretary名称
+     * @param taskId 任务ID
+     * @param taskName 任务名称
+     * @param upstreamTool 上游工具
+     * @param upstreamClient 上游客户端
      */
     public static McpServerFeatures.AsyncToolSpecification createProxyToolSpec(
-            String taskId, String taskName, Tool upstreamTool, UpstreamClient upstreamClient) {
+            String secretaryName, String taskId, String taskName, Tool upstreamTool, UpstreamClient upstreamClient) {
         
-        // 创建代理工具，使用任务名称而非ID
-        String proxyName = STR."\{Constants.Mcp.TOOL_PREFIX}\{taskName}.\{upstreamTool.name()}";
+        // 创建代理工具，使用新的命名格式：secretaryname_taskname_toolname
+        String proxyName = STR."\{secretaryName}_\{taskName}_\{upstreamTool.name()}";
         String proxyDesc = STR."[\{taskName}] \{upstreamTool.description()}";
         
         Tool proxyTool = new Tool(

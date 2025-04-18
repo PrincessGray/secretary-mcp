@@ -14,18 +14,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.server.RouterFunction;
-import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
@@ -91,7 +87,6 @@ public class SseProxyServer {
      * @return 初始化完成的信号
      */
     public Mono<Void> initialize() {
-        // 确保只初始化一次
         if (initialized.compareAndSet(false, true)) {
             log.info("初始化SSE代理服务器");
             
@@ -101,21 +96,16 @@ public class SseProxyServer {
                         this.mcpServer = server;
                         this.toolManager = new ProxyToolManager(mcpServer);
                         
-                        // 注册系统工具
+                        // 注册系统工具，传递Secretary名称
                         return toolManager.registerSystemTools(upstreamClients)
                                 .doOnSuccess(v -> log.info("SSE代理服务器初始化完成"))
                                 .doOnError(e -> {
                                     log.error("SSE代理服务器初始化失败: {}", e.getMessage(), e);
                                     initialized.set(false);
                                 });
-                    })
-                    .onErrorResume(e -> {
-                        log.error("SSE代理服务器初始化过程出错: {}", e.getMessage(), e);
-                        initialized.set(false);
-                        return Mono.error(e);
                     });
         } else {
-            return Mono.empty(); // 已经初始化，直接返回空Mono而不是抛出错误
+            return Mono.empty(); // 已经初始化，直接返回
         }
     }
 
@@ -184,9 +174,13 @@ public class SseProxyServer {
 
     /**
      * 同步上游工具
+     * @param client 上游客户端
+     * @param taskId 任务ID
+     * @param taskName 任务名称
+     * @param secretaryName Secretary名称
      */
-    private Mono<Void> syncUpstreamTools(UpstreamClient client, String taskId, String taskName) {
-        log.info("同步上游工具: {} ({})", taskName, taskId);
+    private Mono<Void> syncUpstreamTools(UpstreamClient client, String taskId, String taskName, String secretaryName) {
+        log.info("同步上游工具: {} ({}) - Secretary: {}", taskName, taskId, secretaryName);
         
         return client.listTools()
                 .doOnSubscribe(s -> log.info("开始获取上游工具列表: {} ({})", taskName, taskId))
@@ -206,7 +200,7 @@ public class SseProxyServer {
                         }
                     }
                     
-                    return toolManager.registerTaskProxyTools(taskId, taskName, tools, client)
+                    return toolManager.registerTaskProxyTools(secretaryName, taskId, taskName, tools, client)
                            .doOnSubscribe(s -> log.info("开始注册任务代理工具: {}, 工具数量: {}", taskName, tools.size()))
                            .doOnSuccess(v -> log.info("任务代理工具注册成功: {}, 工具数量: {}", taskName, tools.size()))
                            .doOnError(e -> log.error("注册任务代理工具失败 - 详细错误: {}", taskName, e));
@@ -227,13 +221,19 @@ public class SseProxyServer {
         
         String taskId = config.getTaskId();
         String taskName = config.getTaskName();
+        String secretaryName = config.getSecretaryName();
         
         // 如果没有指定任务名称，则使用ID
         if (taskName == null || taskName.isEmpty()) {
             taskName = taskId;
         }
         
-        log.info("添加上游客户端: {} ({})", taskName, taskId);
+        // 如果没有指定Secretary名称，则使用默认值
+        if (secretaryName == null || secretaryName.isEmpty()) {
+            secretaryName = "default"; // 或者其他适当的默认值
+        }
+        
+        log.info("添加上游客户端: {} ({}) - Secretary: {}", taskName, taskId, secretaryName);
         
         // 记录配置详情，帮助诊断
         try {
@@ -250,6 +250,7 @@ public class SseProxyServer {
                 removeUpstreamClient(taskId) : Mono.empty();
         
         final String finalTaskName = taskName; // 用于lambda表达式
+        final String finalSecretaryName = secretaryName; // 用于lambda表达式
         
         return cleanupExisting
                 .then(Mono.defer(() -> 
@@ -271,8 +272,8 @@ public class SseProxyServer {
                             upstreamClients.put(taskId, client);
                             log.info("客户端已缓存: {}", taskId);
                             
-                            // 同步上游工具
-                            return syncUpstreamTools(client, taskId, finalTaskName)
+                            // 同步上游工具，传递Secretary名称
+                            return syncUpstreamTools(client, taskId, finalTaskName, finalSecretaryName)
                                     .doOnSubscribe(s -> log.info("开始同步上游工具: {} ({})", finalTaskName, taskId))
                                     .doOnSuccess(v -> log.info("上游客户端添加成功: {} ({})", finalTaskName, taskId))
                                     .publishOn(Schedulers.boundedElastic())
@@ -281,8 +282,8 @@ public class SseProxyServer {
                                         log.error("同步上游工具失败 - 详细错误: {} ({})", finalTaskName, taskId, e);
                                         // 记录系统资源状态
                                         log.info("系统资源状态 - 可用处理器: {}, 可用内存: {}MB", 
-                                               Runtime.getRuntime().availableProcessors(),
-                                               Runtime.getRuntime().freeMemory() / (1024 * 1024));
+                                            Runtime.getRuntime().availableProcessors(),
+                                            Runtime.getRuntime().freeMemory() / (1024 * 1024));
                                         
                                         log.error("添加上游客户端失败: {} ({}) (原因: {})", 
                                                 finalTaskName, taskId, e.getMessage());
@@ -424,5 +425,16 @@ public class SseProxyServer {
         
         // 这个方法主要用于保持服务器运行，直到收到关闭信号
         return Mono.never();
+    }
+
+    /**
+     * 获取MCP服务器实例
+     * @return MCP异步服务器实例
+     */
+    public McpAsyncServer getMcpServer() {
+        if (!initialized.get()) {
+            throw new IllegalStateException("SSE代理服务器未初始化");
+        }
+        return this.mcpServer;
     }
 }

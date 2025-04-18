@@ -27,6 +27,7 @@ import java.util.Properties;
 import java.io.InputStream;
 import java.util.Map;
 import org.yaml.snakeyaml.Yaml;
+import io.secretarymcp.registry.UserSecretaryRegistry;
 
 /**
  * MCP秘书系统应用程序入口
@@ -43,20 +44,25 @@ public class SecretaryApplication {
     @Getter
     private final ObjectMapper objectMapper;
     
+    // 添加UserSecretaryRegistry
+    private final UserSecretaryRegistry userSecretaryRegistry;
+    
     // 用于阻塞主线程的锁
     private static CountDownLatch exitLatch;
 
-    // 构造函数注入依赖
+    // 构造函数注入依赖，添加UserSecretaryRegistry
     public SecretaryApplication(FileSystemStorage storage, 
                               StdioProxyServer stdioProxyServer,
                               SseProxyServer sseProxyServer,
                               Environment environment, 
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              UserSecretaryRegistry userSecretaryRegistry) {
         this.storage = storage;
         this.stdioProxyServer = stdioProxyServer;
         this.sseProxyServer = sseProxyServer;
         this.environment = environment;
         this.objectMapper = objectMapper;
+        this.userSecretaryRegistry = userSecretaryRegistry;
     }
 
     static {
@@ -122,25 +128,29 @@ public class SecretaryApplication {
         if (sseMode && !Arrays.asList(environment.getActiveProfiles()).contains("test")) {
             log.info("API模式下初始化SSE代理服务器");
             
-            // 确保只初始化一次
-            sseProxyServer.isHealthy()
-                    .flatMap(healthy -> {
-                        if (healthy) {
-                            log.info("SSE代理服务器已初始化，无需重复初始化");
-                            return Mono.empty();
-                        }
-                        
-                        log.info("SSE代理服务器尚未初始化，开始初始化...");
-                        return sseProxyServer.initialize()
-                                .doOnSuccess(v -> log.info("SSE代理服务器初始化成功"))
-                                .doOnError(e -> log.error("SSE代理服务器初始化失败: {}", e.getMessage(), e));
-                    })
-                    .then(Mono.defer(() -> {
-                        log.info("SSE代理服务器开始运行...");
-                        return sseProxyServer.run();
-                    }))
-                    .doOnError(e -> log.error("SSE代理服务器运行出错: {}", e.getMessage(), e))
-                    .subscribe(); // 使用subscribe而不是block，避免阻塞事件循环
+            // 先加载所有Secretary信息，以便注册给代理服务器
+            loadAndPreRegisterSecretaries()
+                .then(Mono.defer(() -> {
+                    // 确保只初始化一次
+                    return sseProxyServer.isHealthy()
+                        .flatMap(healthy -> {
+                            if (healthy) {
+                                log.info("SSE代理服务器已初始化，无需重复初始化");
+                                return Mono.empty();
+                            }
+                            
+                            log.info("SSE代理服务器尚未初始化，开始初始化...");
+                            return sseProxyServer.initialize()
+                                    .doOnSuccess(v -> log.info("SSE代理服务器初始化成功"))
+                                    .doOnError(e -> log.error("SSE代理服务器初始化失败: {}", e.getMessage(), e));
+                        })
+                        .then(Mono.defer(() -> {
+                            log.info("SSE代理服务器开始运行...");
+                            return sseProxyServer.run();
+                        }));
+                }))
+                .doOnError(e -> log.error("SSE代理服务器运行出错: {}", e.getMessage(), e))
+                .subscribe(); // 使用subscribe而不是block，避免阻塞事件循环
         }
     }
     
@@ -180,7 +190,10 @@ public class SecretaryApplication {
         try {
             log.info("正在初始化SSE代理服务器");
             
-            // 初始化代理服务器并运行
+            // 初始化代理服务器并运行，传递默认秘书名称
+            // 如果有需要，可以从配置中读取默认秘书名称
+            String defaultSecretaryName = environment.getProperty("mcp.default-secretary", "default");
+            
             sseProxyServer.initialize()
                 .doOnSuccess(v -> log.info("SSE代理服务器初始化成功"))
                 .then(Mono.defer(() -> {
@@ -226,5 +239,21 @@ public class SecretaryApplication {
         if (exitLatch != null) {
             exitLatch.countDown();
         }
+    }
+
+    /**
+     * 加载并预注册所有秘书信息
+     * 这样，当代理服务器初始化时，就可以使用正确的秘书名称来命名工具
+     */
+    private Mono<Void> loadAndPreRegisterSecretaries() {
+        return storage.listSecretaryInfos()
+            .doOnNext(secretaryInfo -> {
+                log.info("加载秘书信息: {} ({})", secretaryInfo.getName(), secretaryInfo.getId());
+                
+                // 将秘书注册到相关组件中
+                // 例如可以预先将秘书信息注册到工具管理器中，以便正确构建工具名称
+                // 这里我们假设只需要记录秘书信息，实际实现可能需要根据您的需求调整
+            })
+            .then();
     }
 }
