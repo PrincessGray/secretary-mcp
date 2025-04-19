@@ -232,33 +232,34 @@ public class WebFluxSseServerTransportProvider implements McpServerTransportProv
 		}
 		
 		// 从URL查询参数中提取用户ID
-		String userId = request.queryParam("id").orElse(null);
+		String userId = request.queryParam("userId").orElse(null);
+		logger.info("SSE连接请求: userId={}", userId);
 		
 		return ServerResponse.ok()
 			.contentType(MediaType.TEXT_EVENT_STREAM)
 			.body(Flux.<ServerSentEvent<?>>create(sink -> {
 				WebFluxMcpSessionTransport sessionTransport = new WebFluxMcpSessionTransport(sink, userId);
 				
-				// 生成会话ID，如果有用户ID则使用"userId:uuid"格式
-				String uuid = UUID.randomUUID().toString();
-				String sessionId = (userId != null && !userId.isEmpty()) 
-					? userId + ":" + uuid 
-					: uuid;
-				
-				// 使用自定义会话ID创建会话
+				// 创建会话 - 会话工厂会处理会话ID的生成
 				McpServerSession session = sessionFactory.create(sessionTransport);
+				String sessionId = session.getId();
 				
-				logger.debug("Created new SSE connection for session: {}", sessionId);
+				// 存储会话 - 使用会话的ID
 				sessions.put(sessionId, session);
-
-				// Send initial endpoint event
-				logger.debug("Sending initial endpoint event to session: {}", sessionId);
+				
+				logger.info("创建会话成功: sessionId={}", sessionId);
+				
+				// 构建带会话ID的端点URL
+				String endpointUrl = buildEndpointUrl(messageEndpoint, sessionId);
+				
+				// 发送初始端点事件
 				sink.next(ServerSentEvent.builder()
 					.event(ENDPOINT_EVENT_TYPE)
-					.data(messageEndpoint + "?sessionId=" + sessionId)
+					.data(endpointUrl)
 					.build());
+				
 				sink.onCancel(() -> {
-					logger.debug("Session {} cancelled", sessionId);
+					logger.debug("会话取消: {}", sessionId);
 					sessions.remove(sessionId);
 				});
 			}), ServerSentEvent.class);
@@ -288,7 +289,15 @@ public class WebFluxSseServerTransportProvider implements McpServerTransportProv
 			return ServerResponse.badRequest().bodyValue(new McpError("Session ID missing in message endpoint"));
 		}
 
-		McpServerSession session = sessions.get(request.queryParam("sessionId").get());
+		String sessionId = request.queryParam("sessionId").get();
+		logger.info("收到消息请求，会话ID: {}", sessionId);
+		
+		McpServerSession session = sessions.get(sessionId);
+		if (session == null) {
+			logger.error("找不到会话ID: {}，当前活跃会话: {}", sessionId, sessions.keySet());
+			return ServerResponse.status(HttpStatus.NOT_FOUND)
+				.bodyValue(new McpError("Session not found"));
+		}
 
 		return request.bodyToMono(String.class).flatMap(body -> {
 			try {
@@ -309,7 +318,16 @@ public class WebFluxSseServerTransportProvider implements McpServerTransportProv
 		});
 	}
 
-	private class WebFluxMcpSessionTransport implements McpServerTransport {
+	/**
+	 * 构建带会话ID的端点URL
+	 */
+	private String buildEndpointUrl(String endpoint, String sessionId) {
+		// 检查端点是否已包含查询参数
+		String separator = endpoint.contains("?") ? "&" : "?";
+		return endpoint + separator + "sessionId=" + sessionId;
+	}
+
+	public class WebFluxMcpSessionTransport implements McpServerTransport {
 
 		private final FluxSink<ServerSentEvent<?>> sink;
 		private final String userId;

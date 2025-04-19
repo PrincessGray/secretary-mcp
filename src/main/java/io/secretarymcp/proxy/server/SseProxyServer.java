@@ -8,6 +8,7 @@ import io.modelcontextprotocol.spec.McpSchema;
 import io.secretarymcp.proxy.client.UpstreamClient;
 import io.secretarymcp.proxy.client.UpstreamClientConfig;
 import io.secretarymcp.proxy.client.UpstreamClientFactory;
+import io.secretarymcp.registry.UserSecretaryRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import io.secretarymcp.storage.FileSystemStorage;
 
 /**
  * SSE代理服务器
@@ -66,18 +68,25 @@ public class SseProxyServer {
     // 注入的WebFluxSseServerTransportProvider
     private final WebFluxSseServerTransportProvider transportProvider;
     
+    // 添加FileSystemStorage字段
+    private final FileSystemStorage storage;
+    
     /**
      * 创建SSE代理服务器
      * 
      * @param objectMapper JSON处理器
      * @param environment 环境配置
      * @param transportProvider SSE传输提供者
+     * @param storage 文件系统存储
      */
-    public SseProxyServer(ObjectMapper objectMapper, Environment environment, WebFluxSseServerTransportProvider transportProvider) {
+    public SseProxyServer(ObjectMapper objectMapper, Environment environment, 
+                         WebFluxSseServerTransportProvider transportProvider,
+                         FileSystemStorage storage) {
         this.objectMapper = objectMapper;
         this.clientFactory = new UpstreamClientFactory(objectMapper);
         this.environment = environment;
         this.transportProvider = transportProvider;
+        this.storage = storage;
     }
 
     /**
@@ -116,13 +125,13 @@ public class SseProxyServer {
      */
     private Mono<McpAsyncServer> createMcpServer() {
         try {
-            // 获取当前服务器端口
-            String serverPort = environment.getProperty("server.port", "8080");
+            // 使用注入的storage创建UserSecretaryRegistry
+            UserSecretaryRegistry registry = new UserSecretaryRegistry(this.storage);
             
             // 记录服务器信息
             log.info("创建SSE MCP服务器，使用已注入的transportProvider");
             
-            // 创建MCP服务器 - 使用注入的transportProvider
+            // 创建MCP服务器 - 使用注入的transportProvider，传递registry
             McpAsyncServer asyncServer = McpServer.async(transportProvider)
                 .serverInfo("mcp-secretary", "0.1.0")
                 .capabilities(McpSchema.ServerCapabilities.builder()
@@ -131,6 +140,7 @@ public class SseProxyServer {
                     .prompts(true)
                     .logging()
                     .build())
+                .userSecretaryRegistry(registry)
                 .build();
             
             return Mono.just(asyncServer);

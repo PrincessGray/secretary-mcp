@@ -36,7 +36,7 @@ public class ProxyTools {
      */
     public static ProxyToolConfig createSystemStatusTool() {
         return ProxyToolConfig.builder()
-                .name(STR."\{Constants.Mcp.TOOL_PREFIX}system.status")
+                .name("system_status")
                 .description("获取代理系统状态信息")
                 .inputSchema(createEmptySchema())
                 .build();
@@ -97,7 +97,7 @@ public class ProxyTools {
     public static McpServerFeatures.AsyncToolSpecification createProxyToolSpec(
             String secretaryName, String taskId, String taskName, Tool upstreamTool, UpstreamClient upstreamClient) {
         
-        // 创建代理工具，使用新的命名格式：secretaryname_taskname_toolname
+        // 创建代理工具，使用下划线分隔的命名格式
         String proxyName = STR."\{secretaryName}_\{taskName}_\{upstreamTool.name()}";
         String proxyDesc = STR."[\{taskName}] \{upstreamTool.description()}";
         

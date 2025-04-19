@@ -20,6 +20,7 @@ import io.modelcontextprotocol.spec.McpSchema.LoggingMessageNotification;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.modelcontextprotocol.spec.McpServerSession;
 import io.modelcontextprotocol.spec.McpServerTransportProvider;
+import io.modelcontextprotocol.server.transport.WebFluxSseServerTransportProvider;
 import io.modelcontextprotocol.util.Utils;
 import io.secretarymcp.registry.UserSecretaryRegistry;
 import org.slf4j.Logger;
@@ -89,6 +90,18 @@ public class McpAsyncServer {
 	McpAsyncServer(McpServerTransportProvider mcpTransportProvider, ObjectMapper objectMapper,
 			McpServerFeatures.Async features, UserSecretaryRegistry userSecretaryRegistry) {
 		this.delegate = new AsyncServerImpl(mcpTransportProvider, objectMapper, features, userSecretaryRegistry);
+	}
+
+	/**
+	 * Create a new McpAsyncServer with the given transport provider and capabilities.
+	 * @param mcpTransportProvider The transport layer implementation for MCP
+	 * communication.
+	 * @param features The MCP server supported features.
+	 * @param objectMapper The ObjectMapper to use for JSON serialization/deserialization
+	 */
+	McpAsyncServer(McpServerTransportProvider mcpTransportProvider, ObjectMapper objectMapper,
+			McpServerFeatures.Async features) {
+		this(mcpTransportProvider, objectMapper, features, null);
 	}
 
 	/**
@@ -270,6 +283,9 @@ public class McpAsyncServer {
 	 * @return Secretary名称
 	 */
 	public Mono<String> getSecretaryForUser(String userId) {
+		if (userId == null) {
+			return Mono.error(new McpError("User ID must not be null"));
+		}
 		return this.delegate.getSecretaryForUser(userId);
 	}
 
@@ -357,8 +373,26 @@ public class McpAsyncServer {
 			notificationHandlers.put(McpSchema.METHOD_NOTIFICATION_ROOTS_LIST_CHANGED,
 					asyncRootsListChangedNotificationHandler(rootsChangeConsumers));
 
-			mcpTransportProvider.setSessionFactory(transport -> new McpServerSession(UUID.randomUUID().toString(), transport,
-					this::asyncInitializeRequestHandler, Mono::empty, requestHandlers, notificationHandlers));
+			mcpTransportProvider.setSessionFactory(transport -> {
+				// 尝试从传输对象获取userId
+				String userId = null;
+				if (transport instanceof WebFluxSseServerTransportProvider.WebFluxMcpSessionTransport) {
+					// 获取传输对象中的userId
+					userId = ((WebFluxSseServerTransportProvider.WebFluxMcpSessionTransport) transport).getUserId();
+					logger.info("从传输层获取到userId: {}", userId);
+				}
+				
+				// 生成会话ID，使用下划线代替冒号作为分隔符
+				String uuid = UUID.randomUUID().toString();
+				String sessionId = (userId != null && !userId.isEmpty()) 
+					? userId + "_" + uuid     // 使用下划线分隔
+					: uuid;
+				logger.info("创建会话: sessionId={}, userId={}", sessionId, userId);
+				
+				// 使用自定义会话ID创建会话
+				return new McpServerSession(sessionId, transport,
+						this::asyncInitializeRequestHandler, Mono::empty, requestHandlers, notificationHandlers);
+			});
 		}
 
 		// ---------------------------------------
@@ -493,34 +527,48 @@ public class McpAsyncServer {
 				String sessionId = exchange.getSession().getId();
 				
 				// 提取用户ID（假设格式为"userId:uuid"）
-				String userId = userSecretaryRegistry.extractUserIdFromSessionId(sessionId);
+				String userId = userSecretaryRegistry != null ? 
+					userSecretaryRegistry.extractUserIdFromSessionId(sessionId) : null;
 				
-				// 获取用户关联的Secretary
-				return Mono.justOrEmpty(userId)
-					.flatMap(id -> userSecretaryRegistry.getSecretaryForUser(id))
-					.defaultIfEmpty(null)
-					.flatMap(secretaryName -> {
-						// 获取所有工具
-						List<Tool> allTools = this.tools.stream()
-							.map(McpServerFeatures.AsyncToolSpecification::tool)
+				// 获取所有工具
+				List<Tool> allTools = this.tools.stream()
+					.map(McpServerFeatures.AsyncToolSpecification::tool)
+					.toList();
+				
+				// 如果没有用户注册表或用户ID为空，直接过滤出系统工具即可
+				if (userSecretaryRegistry == null || userId == null) {
+					allTools = allTools.stream()
+						.filter(tool -> tool.name().contains("system_"))
+						.toList();
+					return Mono.just(new McpSchema.ListToolsResult(allTools, null));
+				}
+				
+				// 如果有用户ID，获取用户关联的Secretary
+				List<Tool> finalAllTools = allTools;
+				return userSecretaryRegistry.getSecretaryForUser(userId)
+					.map(secretaryName -> {
+						// 用户有关联的Secretary，过滤工具列表
+						List<Tool> filteredTools = finalAllTools.stream()
+							.filter(tool -> {
+								// 系统工具对所有用户可见
+								if (tool.name().contains("system_")) {
+									return true;
+								}
+								
+								// 检查工具是否属于该用户的Secretary
+								return userSecretaryRegistry.isToolBelongsToSecretary(tool.name(), secretaryName);
+							})
 							.toList();
 						
-						// 如果用户有关联的Secretary，过滤工具列表
-						if (userId != null && secretaryName != null) {
-							// 过滤属于该用户关联的Secretary的工具
-							allTools = allTools.stream()
-								.filter(tool -> {
-									// 检查工具名称前缀是否匹配Secretary名称
-									return userSecretaryRegistry.isToolBelongsToSecretary(tool.name(), secretaryName);
-								})
-								.toList();
-						} else {
-							// 如果用户没有关联Secretary，返回空列表
-							allTools = List.of();
-						}
-						
-						return Mono.just(new McpSchema.ListToolsResult(allTools, null));
-					});
+						return new McpSchema.ListToolsResult(filteredTools, null);
+					})
+					.defaultIfEmpty(new McpSchema.ListToolsResult(
+						// 如果用户没有关联Secretary，只返回系统工具
+						allTools.stream()
+							.filter(tool -> tool.name().contains("system_"))
+							.toList(), 
+						null
+					));
 			};
 		}
 
@@ -532,24 +580,31 @@ public class McpAsyncServer {
 				
 				// 获取会话ID并提取用户ID
 				String sessionId = exchange.getSession().getId();
-				String userId = userSecretaryRegistry.extractUserIdFromSessionId(sessionId);
+				String userId = userSecretaryRegistry != null ? 
+					userSecretaryRegistry.extractUserIdFromSessionId(sessionId) : null;
 				
-				// 工具权限检查，基于新的命名格式
-				if (userId == null || !userSecretaryRegistry.canUserAccessTool(userId, callToolRequest.name())) {
-					return Mono.error(new McpError("Access denied to tool: " + callToolRequest.name()));
+				String toolName = callToolRequest.name();
+				
+				// 系统工具总是可访问的
+				boolean isSystemTool = toolName.contains("system_");
+				
+				// 工具权限检查
+				if (!isSystemTool && userSecretaryRegistry != null && 
+					(userId == null || !userSecretaryRegistry.canUserAccessTool(userId, toolName))) {
+					return Mono.error(new McpError("Access denied to tool: " + toolName));
 				}
 
 				// 查找工具并调用
 				Optional<McpServerFeatures.AsyncToolSpecification> toolSpecification = this.tools.stream()
-					.filter(tr -> callToolRequest.name().equals(tr.tool().name()))
+					.filter(tr -> toolName.equals(tr.tool().name()))
 					.findAny();
 
 				if (toolSpecification.isEmpty()) {
-					return Mono.error(new McpError("Tool not found: " + callToolRequest.name()));
+					return Mono.error(new McpError("Tool not found: " + toolName));
 				}
 
 				return toolSpecification.map(tool -> tool.call().apply(exchange, callToolRequest.arguments()))
-					.orElse(Mono.error(new McpError("Tool not found: " + callToolRequest.name())));
+					.orElse(Mono.error(new McpError("Tool not found: " + toolName)));
 			};
 		}
 

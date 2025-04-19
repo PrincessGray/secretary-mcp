@@ -39,9 +39,6 @@ spring:
   web:
     resources:
       static-locations: classpath:/static/
-  devtools:
-    restart:
-      enabled: false  # 禁用DevTools热重启功能
 
 # 调整Netty相关配置
 reactor:

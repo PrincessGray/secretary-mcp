@@ -171,13 +171,24 @@ public class UserSecretaryRegistry {
     
     /**
      * 从会话ID中提取用户ID
-     * 假设会话ID格式为 "userId:uuid"
+     * 格式为：userId_uuid
      */
     public String extractUserIdFromSessionId(String sessionId) {
-        if (sessionId == null || !sessionId.contains(":")) {
+        if (sessionId == null || sessionId.isEmpty()) {
+            log.warn("会话ID为空，无法提取用户ID");
             return null;
         }
-        return sessionId.split(":", 2)[0];
+        
+        // 分割会话ID，提取用户ID部分（使用下划线分隔）
+        int underscoreIndex = sessionId.indexOf('_');
+        if (underscoreIndex > 0) {
+            String userId = sessionId.substring(0, underscoreIndex);
+            log.info("从会话ID[{}]成功提取用户ID: {}", sessionId, userId);
+            return userId;
+        } else {
+            log.warn("会话ID[{}]格式不正确，无法提取用户ID", sessionId);
+            return null;
+        }
     }
     
     /**

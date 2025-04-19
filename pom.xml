@@ -51,7 +51,7 @@
             <optional>true</optional>
         </dependency>
         
-        <!-- MCP协议相关依赖 -->
+        <!-- MCP协议相关依赖
         <dependency>
             <groupId>io.modelcontextprotocol.sdk</groupId>
             <artifactId>mcp</artifactId>
@@ -62,7 +62,7 @@
             <groupId>io.modelcontextprotocol.sdk</groupId>
             <artifactId>mcp-spring-webflux</artifactId>
             <version>${mcp.sdk.version}</version>
-        </dependency>
+        </dependency> -->
         
         <!-- 显式添加Reactor Netty HTTP实现 -->
         <dependency>
