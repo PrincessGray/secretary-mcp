@@ -55,8 +55,8 @@ public class ProxyServerAdapter implements ProxyServer {
     }
     
     @Override
-    public Mono<Void> removeUpstreamClient(String taskId) {
-        return delegateServer.removeUpstreamClient(taskId);
+    public Mono<Void> removeUpstreamClient(String secretaryName, String taskId) {
+        return delegateServer.removeUpstreamClient(secretaryName, taskId);
     }
     
     @Override
@@ -80,8 +80,8 @@ public class ProxyServerAdapter implements ProxyServer {
             }
 
         @Override
-            public Mono<Void> removeUpstreamClient(String taskId) {
-                return sseProxyServer.removeUpstreamClient(taskId);
+            public Mono<Void> removeUpstreamClient(String secretaryName,String taskId) {
+                return sseProxyServer.removeUpstreamClient(secretaryName,taskId);
             }
 
         @Override
@@ -106,8 +106,8 @@ public class ProxyServerAdapter implements ProxyServer {
             }
 
         @Override
-            public Mono<Void> removeUpstreamClient(String taskId) {
-                return stdioProxyServer.removeUpstreamClient(taskId);
+            public Mono<Void> removeUpstreamClient(String secretaryName, String taskId) {
+                return stdioProxyServer.removeUpstreamClient(secretaryName,taskId);
             }
 
         @Override

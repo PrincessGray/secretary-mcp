@@ -72,7 +72,7 @@ public class RemoteTask {
         // 深拷贝ConnectionProfile
         task.setConnectionProfile(deepCopy(template.getConnectionProfile()));
         
-        // 处理所有可定制参数 - 这是新增的部分
+        // 处理所有可定制参数
         if (task.customizableParams != null) {
             for (TaskTemplate.ConfigParam param : task.customizableParams) {
                 if (param.getDefaultValue() == null) {
@@ -89,35 +89,12 @@ public class RemoteTask {
                     case STDIO_ARG:
                         task.applyStdioArgParam(param, Boolean.parseBoolean(value));
                         break;
-                    case SSE_AUTH_PARAM:
-                        // 根据参数名称进行特殊处理
-                        if ("apiKey".equals(param.getName())) {
-                            // apiKey处理为认证令牌
-                            task.getConnectionProfile().getSseConfig().setAuthToken(value);
-                        } else if ("url".equals(param.getName()) || 
-                                   param.getName().toLowerCase().contains("url")) {
-                            // URL参数处理
-                            SseConfig sseConfig = task.getConnectionProfile().getSseConfig();
-                            if (value.startsWith("http://") || value.startsWith("https://")) {
-                                // 完整URL直接替换
-                                sseConfig.setServerUrl(value);
-                            } else {
-                                // 否则作为查询参数
-                                String currentUrl = sseConfig.getServerUrl();
-                                String paramName = param.getName();
-                                if (paramName.startsWith("url:")) {
-                                    paramName = paramName.substring(4);
-                                }
-                                
-                                if (currentUrl.contains("?")) {
-                                    sseConfig.setServerUrl(currentUrl + "&" + paramName + "=" + value);
-                                } else {
-                                    sseConfig.setServerUrl(currentUrl + "?" + paramName + "=" + value);
-                                }
-                            }
-                        } else {
-                            // 其他参数作为HTTP头
-                            task.applySseAuthParam(param.getName(), value);
+                    case SSE_CONNECTION:
+                        // 处理SSE连接参数
+                        if ("serverUrl".equals(param.getName())) {
+                            task.getConnectionProfile().getSseConfig().setServerUrl(value);
+                        } else if ("bearerToken".equals(param.getName())) {
+                            task.getConnectionProfile().getSseConfig().setBearerToken(value);
                         }
                         break;
                 }
@@ -151,8 +128,8 @@ public class RemoteTask {
                     // 只处理布尔值，决定是否启用此参数
                     applyStdioArgParam(param, Boolean.parseBoolean(String.valueOf(value)));
                     break;
-                case SSE_AUTH_PARAM:
-                    applySseAuthParam(param.getName(), String.valueOf(value));
+                case SSE_CONNECTION:
+                    applySseConnectionParam(param.getName(), String.valueOf(value));
                     break;
             }
         }
@@ -197,50 +174,19 @@ public class RemoteTask {
         }
     }
     
-    private void applySseAuthParam(String name, String value) {
+    /**
+     * 应用SSE连接参数
+     */
+    private void applySseConnectionParam(String name, String value) {
         if (connectionProfile != null && 
             connectionProfile.getConnectionType() == Constants.ConnectionType.SSE &&
             connectionProfile.getSseConfig() != null) {
                 
-            // 使用与TaskTemplate.addSseAuthParam相同的逻辑
-            if ("apiKey".equals(name)) {
-                // 如果是apiKey，设置为认证令牌
-                connectionProfile.getSseConfig().setAuthToken(value);
-            } 
-            else if ("url".equals(name) || name.toLowerCase().contains("url")) {
-                // 如果参数名是"url"或包含"url"，处理为URL参数
-                if (value.startsWith("http://") || value.startsWith("https://")) {
-                    // 如果是完整URL，直接替换
-                    connectionProfile.getSseConfig().setServerUrl(value);
-                } else {
-                    // 否则作为查询参数添加
-                    String currentUrl = connectionProfile.getSseConfig().getServerUrl();
-                    String paramName = name.startsWith("url:") ? name.substring(4) : name;
-                    
-                    // 检查URL是否已经包含参数
-                    if (currentUrl.contains("?")) {
-                        // 已经有参数，添加新参数
-                        connectionProfile.getSseConfig().setServerUrl(currentUrl + "&" + paramName + "=" + value);
-                    } else {
-                        // 没有参数，添加第一个参数
-                        connectionProfile.getSseConfig().setServerUrl(currentUrl + "?" + paramName + "=" + value);
-                    }
-                }
-            }
-            else if (name.startsWith("header:")) {
-                // 如果以header:开头，添加为HTTP头部
-                String headerName = name.substring(7); // 移除"header:"前缀
-                
-                if (connectionProfile.getSseConfig().getCustomHeaders() == null) {
-                    connectionProfile.getSseConfig().setCustomHeaders(new HashMap<>());
-                }
-                connectionProfile.getSseConfig().getCustomHeaders().put(headerName, value);
-            } else {
-                // 对于其他参数，添加到自定义标头中
-                if (connectionProfile.getSseConfig().getCustomHeaders() == null) {
-                    connectionProfile.getSseConfig().setCustomHeaders(new HashMap<>());
-                }
-                connectionProfile.getSseConfig().getCustomHeaders().put(name, value);
+            // 简化的SSE连接参数逻辑
+            if ("serverUrl".equals(name)) {
+                connectionProfile.getSseConfig().setServerUrl(value);
+            } else if ("bearerToken".equals(name)) {
+                connectionProfile.getSseConfig().setBearerToken(value);
             }
         }
     }
@@ -299,16 +245,38 @@ public class RemoteTask {
     }
     
     /**
-     * 获取API密钥参数
+     * 获取所有SSE连接参数
      */
-    public TaskTemplate.ConfigParam getApiKeyParam() {
+    public List<TaskTemplate.ConfigParam> getSseConnectionParams() {
+        return getConfigParamsByCategory(TaskTemplate.ConfigParam.ConfigParamCategory.SSE_CONNECTION);
+    }
+    
+    /**
+     * 获取SSE服务器URL参数
+     */
+    public TaskTemplate.ConfigParam getServerUrlParam() {
         if (this.customizableParams == null) {
             return null;
         }
         
         return this.customizableParams.stream()
-                .filter(param -> "apiKey".equals(param.getName()) && 
-                      param.getCategory() == TaskTemplate.ConfigParam.ConfigParamCategory.SSE_AUTH_PARAM)
+                .filter(param -> "serverUrl".equals(param.getName()) && 
+                      param.getCategory() == TaskTemplate.ConfigParam.ConfigParamCategory.SSE_CONNECTION)
+                .findFirst()
+                .orElse(null);
+    }
+    
+    /**
+     * 获取Bearer Token参数
+     */
+    public TaskTemplate.ConfigParam getBearerTokenParam() {
+        if (this.customizableParams == null) {
+            return null;
+        }
+        
+        return this.customizableParams.stream()
+                .filter(param -> "bearerToken".equals(param.getName()) && 
+                      param.getCategory() == TaskTemplate.ConfigParam.ConfigParamCategory.SSE_CONNECTION)
                 .findFirst()
                 .orElse(null);
     }
@@ -405,8 +373,6 @@ public class RemoteTask {
         if (original.getGeneralConfig() != null) {
             generalConfig.setTimeoutSeconds(original.getGeneralConfig().getTimeoutSeconds());
             generalConfig.setRetryCount(original.getGeneralConfig().getRetryCount());
-//            generalConfig.setEnableRoots(original.getGeneralConfig().isEnableRoots());
-//            generalConfig.setEnableSampling(original.getGeneralConfig().isEnableSampling());
             generalConfig.setLoggingLevel(original.getGeneralConfig().getLoggingLevel());
             
             if (original.getGeneralConfig().getCustomSettings() != null) {
@@ -431,11 +397,7 @@ public class RemoteTask {
         } else if (original.getConnectionType() == Constants.ConnectionType.SSE && original.getSseConfig() != null) {
             SseConfig sseConfig = new SseConfig();
             sseConfig.setServerUrl(original.getSseConfig().getServerUrl());
-            sseConfig.setAuthToken(original.getSseConfig().getAuthToken());
-            
-            if (original.getSseConfig().getCustomHeaders() != null) {
-                sseConfig.setCustomHeaders(new HashMap<>(original.getSseConfig().getCustomHeaders()));
-            }
+            sseConfig.setBearerToken(original.getSseConfig().getBearerToken());
             
             copy.setSseConfig(sseConfig);
         }

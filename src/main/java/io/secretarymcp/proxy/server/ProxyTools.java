@@ -36,7 +36,7 @@ public class ProxyTools {
      */
     public static ProxyToolConfig createSystemStatusTool() {
         return ProxyToolConfig.builder()
-                .name("system_status")
+                .name(STR."system_status")
                 .description("获取代理系统状态信息")
                 .inputSchema(createEmptySchema())
                 .build();
@@ -54,6 +54,7 @@ public class ProxyTools {
     
     /**
      * 创建系统状态工具规范
+     * @param upstreamClients 上游客户端映射
      */
     public static McpServerFeatures.AsyncToolSpecification createSystemStatusToolSpec(Map<String, UpstreamClient> upstreamClients) {
         Tool tool = new Tool(

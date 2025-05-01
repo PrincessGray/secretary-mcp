@@ -27,7 +27,7 @@ public interface ProxyServer {
      * @param taskId 任务ID
      * @return 操作结果
      */
-    Mono<Void> removeUpstreamClient(String taskId);
+    Mono<Void> removeUpstreamClient(String secretaryName,String taskId);
     
     /**
      * 关闭代理服务器

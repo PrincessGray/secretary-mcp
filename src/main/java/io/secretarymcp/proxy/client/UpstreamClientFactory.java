@@ -320,18 +320,11 @@ public class UpstreamClientFactory {
             WebClient.Builder webClientBuilder = WebClient.builder()
                     .baseUrl(baseUrl);
             
-            // 添加自定义头部
-            if (sseConfig.getCustomHeaders() != null) {
-                sseConfig.getCustomHeaders().forEach((key, value) -> {
-                    if (key != null && value != null) {
-                        webClientBuilder.defaultHeader(key, value);
-                    }
-                });
-            }
+
             
             // 添加认证Token
-            if (sseConfig.getAuthToken() != null && !sseConfig.getAuthToken().isEmpty()) {
-                webClientBuilder.defaultHeader("Authorization", "Bearer " + sseConfig.getAuthToken());
+            if (sseConfig.getBearerToken() != null && !sseConfig.getBearerToken().isEmpty()) {
+                webClientBuilder.defaultHeader("Authorization", "Bearer " + sseConfig.getBearerToken());
             }
             
             // 使用builder创建SSE传输层，设置重试策略

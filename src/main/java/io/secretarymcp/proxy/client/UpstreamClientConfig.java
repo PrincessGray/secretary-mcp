@@ -124,11 +124,7 @@ public class UpstreamClientConfig {
                 SseConfig original = originalProfile.getSseConfig();
                 
                 sseConfig.setServerUrl(original.getServerUrl());
-                sseConfig.setAuthToken(original.getAuthToken());
-                
-                if (original.getCustomHeaders() != null) {
-                    sseConfig.setCustomHeaders(new java.util.HashMap<>(original.getCustomHeaders()));
-                }
+                sseConfig.setBearerToken(original.getBearerToken());
             }
             
             // 验证SSE配置的完整性
@@ -145,7 +141,7 @@ public class UpstreamClientConfig {
 
 //TODO        // 设置采样处理器（如果GeneralConfig中启用了采样）
 //        if (profile.getGeneralConfig() != null &&
-//            Boolean.TRUE.equals(profile.getGeneralConfig().getEnableSampling())) {
+//            Boolean.TRUE.equals(profile.getGeneralConfig().getEnab leSampling())) {
 //            // 设置默认的采样处理器，或者根据需要自定义
 //            config.setSamplingHandler(createDefaultSamplingHandler());
 //        }
@@ -269,12 +265,13 @@ public class UpstreamClientConfig {
         }
         
         public Builder sseAuthToken(String token) {
-            ensureSseConfig().setAuthToken(token);
+            ensureSseConfig().setBearerToken(token);
             return this;
         }
         
         public Builder sseCustomHeaders(java.util.Map<String, String> headers) {
-            ensureSseConfig().setCustomHeaders(headers);
+            // 由于SseConfig中没有customHeaders字段，此方法应该移除或修改
+            // 暂时可以保留但不执行任何操作
             return this;
         }
         

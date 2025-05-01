@@ -182,7 +182,7 @@ public class TaskService {
                     log.info("停用任务: {}/{}", secretaryId, taskId);
                     
                     // 使用代理服务器移除上游客户端
-                    return proxyServer.removeUpstreamClient(taskId)
+                    return proxyServer.removeUpstreamClient(task.getSecretaryName(),taskId)
                             .then(Mono.defer(() -> {
                                 // 更新任务状态
                                 task.deactivate();

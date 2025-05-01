@@ -60,7 +60,7 @@ public class ProxyToolManager {
         
         // 为每个上游工具创建代理工具
         for (Tool tool : tools) {
-            String proxyToolName = Constants.Mcp.TOOL_PREFIX + taskName + "." + tool.name();
+            String proxyToolName = secretaryName + "_" + taskName + "_" + tool.name();
             
             // 创建工具规范
             McpServerFeatures.AsyncToolSpecification toolSpec = 
@@ -84,10 +84,10 @@ public class ProxyToolManager {
     /**
      * 注销特定任务的所有代理工具
      */
-    public Mono<Void> unregisterTaskProxyTools(String taskId, String taskName) {
+    public Mono<Void> unregisterTaskProxyTools(String secretaryName,String taskId, String taskName) {
         log.info("注销任务代理工具: {}", taskName);
         
-        String toolPrefix = Constants.Mcp.TOOL_PREFIX + taskName + ".";
+        String toolPrefix = secretaryName + "_" + taskName + "_";
         
         // 找出所有属于该任务的工具
         List<String> toolsToRemove = new ArrayList<>();

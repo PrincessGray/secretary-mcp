@@ -8,6 +8,7 @@ import io.modelcontextprotocol.spec.McpSchema;
 import io.secretarymcp.proxy.client.UpstreamClient;
 import io.secretarymcp.proxy.client.UpstreamClientConfig;
 import io.secretarymcp.proxy.client.UpstreamClientFactory;
+import io.secretarymcp.service.SecretaryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.springframework.context.annotation.Lazy;
 
 /**
  * STDIO代理服务器
@@ -38,7 +40,8 @@ public class StdioProxyServer {
     
     // 初始化标志
     private final AtomicBoolean initialized = new AtomicBoolean(false);
-    
+    private final SecretaryService secretaryService;
+
     // MCP服务器
     private McpAsyncServer mcpServer;
     
@@ -48,9 +51,10 @@ public class StdioProxyServer {
     /**
      * 创建STDIO代理服务器
      */
-    public StdioProxyServer(ObjectMapper objectMapper) {
+    public StdioProxyServer(ObjectMapper objectMapper, @Lazy SecretaryService secretaryService) {
         this.objectMapper = objectMapper;
         this.clientFactory = new UpstreamClientFactory(objectMapper);
+        this.secretaryService = secretaryService;
     }
 
     /**
@@ -174,7 +178,7 @@ public class StdioProxyServer {
         // 如果已存在，先删除
         UpstreamClient existingClient = upstreamClients.get(taskId);
         Mono<Void> cleanupExisting = existingClient != null ?
-                removeUpstreamClient(taskId) : Mono.empty();
+                removeUpstreamClient(secretaryName,taskId) : Mono.empty();
         
         final String finalTaskName = taskName; // 用于lambda表达式
         final String finalSecretaryName = secretaryName; // 用于lambda表达式
@@ -232,7 +236,7 @@ public class StdioProxyServer {
     /**
      * 移除上游客户端
      */
-    public Mono<Void> removeUpstreamClient(String taskId) {
+    public Mono<Void> removeUpstreamClient(String secretaryName,String taskId) {
         if (!initialized.get()) {
             return Mono.error(new IllegalStateException("代理服务器未初始化"));
         }
@@ -251,7 +255,7 @@ public class StdioProxyServer {
         })
         .flatMap(c -> 
             // 注销工具
-            toolManager.unregisterTaskProxyTools(taskId, client.getTaskName())
+            toolManager.unregisterTaskProxyTools(secretaryName,taskId, client.getTaskName())
                 .doOnSubscribe(s -> log.info("开始注销任务代理工具: {}/{}", client.getTaskName(), taskId))
                 .doOnSuccess(v -> log.info("任务代理工具注销成功: {}/{}", client.getTaskName(), taskId))
                 .doOnError(e -> log.error("注销任务代理工具失败: {}/{} - 详细错误:", 

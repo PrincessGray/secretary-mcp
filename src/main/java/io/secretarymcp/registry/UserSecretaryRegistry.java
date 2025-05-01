@@ -204,4 +204,20 @@ public class UserSecretaryRegistry {
     public Set<String> getAllSecretaries() {
         return new HashSet<>(userSecretaryMap.values());
     }
+    
+    /**
+     * 获取所有用户和Secretary的对应关系
+     * @return 用户ID到Secretary名称的映射关系
+     */
+    public Mono<Map<String, String>> getAllUserSecretaryMappings() {
+        return storage.loadUserSecretaryMappings();
+    }
+    
+    /**
+     * 获取所有用户和Secretary的对应关系（同步版本）
+     * @return 用户ID到Secretary名称的映射关系
+     */
+    public Map<String, String> getAllUserSecretaryMappingsSync() {
+        return storage.loadUserSecretaryMappings().block();
+    }
 }

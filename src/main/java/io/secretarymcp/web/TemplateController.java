@@ -84,13 +84,9 @@ public class TemplateController {
             // 设置其他SSE特定参数
             SseConfig sseConfig = template.getConnectionProfile().getSseConfig();
             if (request.getSseAuthToken() != null) {
-                sseConfig.setAuthToken(request.getSseAuthToken());
+                sseConfig.setBearerToken(request.getSseAuthToken());
             }
-            
-            if (request.getSseHeaders() != null) {
-                sseConfig.setCustomHeaders(request.getSseHeaders());
-            }
-            
+
         } else if (connectionType == Constants.ConnectionType.STDIO) {
             if (request.getStdioCommand() == null) {
                 return Mono.error(new ResponseStatusException(
@@ -182,14 +178,19 @@ public class TemplateController {
                             param.isRequired()
                         );
                         break;
-                    case SSE_AUTH_PARAM:
-                        template.addSseAuthParam(
-                            param.getName(),
-                            param.getDisplayName(),
-                            param.getDescription(),
-                            (String) param.getDefaultValue(),
-                            param.isRequired()
-                        );
+                    case SSE_CONNECTION:
+                        // 根据参数名称区分处理
+                        if ("serverUrl".equals(param.getName())) {
+                            template.addSseUrlParam(
+                                (String) param.getDefaultValue(),
+                                param.isRequired()
+                            );
+                        } else if ("bearerToken".equals(param.getName())) {
+                            template.addSseBearerTokenParam(
+                                (String) param.getDefaultValue(),
+                                param.isRequired()
+                            );
+                        }
                         break;
                 }
             }

@@ -257,7 +257,7 @@ public class SseProxyServer {
         // 如果已存在，先删除
         UpstreamClient existingClient = upstreamClients.get(taskId);
         Mono<Void> cleanupExisting = existingClient != null ?
-                removeUpstreamClient(taskId) : Mono.empty();
+                removeUpstreamClient(secretaryName,taskId) : Mono.empty();
         
         final String finalTaskName = taskName; // 用于lambda表达式
         final String finalSecretaryName = secretaryName; // 用于lambda表达式
@@ -315,7 +315,7 @@ public class SseProxyServer {
     /**
      * 移除上游客户端
      */
-    public Mono<Void> removeUpstreamClient(String taskId) {
+    public Mono<Void> removeUpstreamClient(String secretaryName,String taskId) {
         if (!initialized.get()) {
             return Mono.error(new IllegalStateException("SSE代理服务器未初始化"));
         }
@@ -334,7 +334,7 @@ public class SseProxyServer {
         })
         .flatMap(c -> 
             // 注销工具
-            toolManager.unregisterTaskProxyTools(taskId, client.getTaskName())
+            toolManager.unregisterTaskProxyTools(secretaryName,taskId, client.getTaskName())
                 .doOnSubscribe(s -> log.info("开始注销任务代理工具: {}/{}", client.getTaskName(), taskId))
                 .doOnSuccess(v -> log.info("任务代理工具注销成功: {}/{}", client.getTaskName(), taskId))
                 .doOnError(e -> log.error("注销任务代理工具失败: {}/{} - 详细错误:", 

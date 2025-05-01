@@ -64,7 +64,7 @@ public class TaskTemplate {
         public enum ConfigParamCategory {
             STDIO_ENV,        // STDIO环境变量
             STDIO_ARG,        // STDIO命令行参数(只允许选择是否启用)
-            SSE_AUTH_PARAM    // SSE认证参数(如API密钥、用户名等)
+            SSE_CONNECTION    // SSE连接参数(URL和bearerToken)
         }
     }
     
@@ -110,6 +110,10 @@ public class TaskTemplate {
         // 添加默认配置
         template.setDefaultConfigValue("enableRoots", false);
         template.setDefaultConfigValue("enableSampling", false);
+        
+        // 添加SSE连接参数（URL和bearerToken）
+        template.addSseUrlParam(serverUrl, true);
+        template.addSseBearerTokenParam("", false);
         
         return template;
     }
@@ -202,44 +206,56 @@ public class TaskTemplate {
     }
     
     /**
-     * 添加SSE认证参数
-     * 
-     * 说明：
-     * 1. 如果参数名为"apiKey"，则会自动设置为认证令牌
-     * 2. 所有其他参数将作为自定义头部添加
-     * 3. 如果需要配置URL参数，请在前端使用单独的界面或通过其他方法直接设置serverUrl
+     * 添加SSE URL参数
      */
-    public void addSseAuthParam(String name, String displayName, String description, String defaultValue, boolean required) {
+    public void addSseUrlParam(String defaultValue, boolean required) {
         if (getConnectionProfile().getConnectionType() != Constants.ConnectionType.SSE) {
-            throw new IllegalStateException("只有SSE连接类型支持认证参数");
+            throw new IllegalStateException("只有SSE连接类型支持URL参数");
         }
         
         ConfigParam param = ConfigParam.builder()
-                .name(name)
-                .displayName(displayName)
-                .description(description)
+                .name("serverUrl")
+                .displayName("服务器URL")
+                .description("SSE服务器的URL地址")
                 .type("string")
                 .defaultValue(defaultValue)
                 .required(required)
-                .category(ConfigParam.ConfigParamCategory.SSE_AUTH_PARAM)
+                .category(ConfigParam.ConfigParamCategory.SSE_CONNECTION)
                 .build();
         
         getCustomizableParams().add(param);
         
-        // 如果有默认值，只处理简单情况
+        // 设置默认值
         if (defaultValue != null) {
             SseConfig sseConfig = getConnectionProfile().getSseConfig();
-            
-            if ("apiKey".equals(name)) {
-                // 如果是apiKey，设置为认证令牌
-                sseConfig.setAuthToken(defaultValue);
-            } else {
-                // 所有其他参数，统一添加到自定义标头中
-                if (sseConfig.getCustomHeaders() == null) {
-                    sseConfig.setCustomHeaders(new HashMap<>());
-                }
-                sseConfig.getCustomHeaders().put(name, defaultValue);
-            }
+            sseConfig.setServerUrl(defaultValue);
+        }
+    }
+    
+    /**
+     * 添加SSE Bearer Token参数
+     */
+    public void addSseBearerTokenParam(String defaultValue, boolean required) {
+        if (getConnectionProfile().getConnectionType() != Constants.ConnectionType.SSE) {
+            throw new IllegalStateException("只有SSE连接类型支持Bearer Token参数");
+        }
+        
+        ConfigParam param = ConfigParam.builder()
+                .name("bearerToken")
+                .displayName("Bearer Token")
+                .description("用于SSE服务器认证的Bearer Token")
+                .type("string")
+                .defaultValue(defaultValue)
+                .required(required)
+                .category(ConfigParam.ConfigParamCategory.SSE_CONNECTION)
+                .build();
+        
+        getCustomizableParams().add(param);
+        
+        // 设置默认值
+        if (defaultValue != null) {
+            SseConfig sseConfig = getConnectionProfile().getSseConfig();
+            sseConfig.setBearerToken(defaultValue);
         }
     }
     

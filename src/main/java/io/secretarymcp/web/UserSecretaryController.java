@@ -1,19 +1,24 @@
 package io.secretarymcp.web;
 
 import io.secretarymcp.proxy.server.SseProxyServer;
+import io.secretarymcp.registry.UserSecretaryRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/user-secretary")
 public class UserSecretaryController {
     private final SseProxyServer sseProxyServer;
+    private final UserSecretaryRegistry userSecretaryRegistry;
     
     @Autowired
-    public UserSecretaryController(SseProxyServer sseProxyServer) {
+    public UserSecretaryController(SseProxyServer sseProxyServer, UserSecretaryRegistry userSecretaryRegistry) {
         this.sseProxyServer = sseProxyServer;
+        this.userSecretaryRegistry = userSecretaryRegistry;
     }
     
     @PostMapping("/register")
@@ -45,5 +50,13 @@ public class UserSecretaryController {
                 }
                 return ResponseEntity.notFound().build();
             }));
+    }
+
+    /**
+     * 获取所有用户和Secretary的对应关系
+     */
+    @GetMapping("/secretary-mappings")
+    public Mono<Map<String, String>> getAllUserSecretaryMappings() {
+        return userSecretaryRegistry.getAllUserSecretaryMappings();
     }
 }
