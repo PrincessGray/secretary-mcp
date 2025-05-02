@@ -15,6 +15,10 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.web.reactive.config.CorsRegistry;
+import org.springframework.web.reactive.config.WebFluxConfigurer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
@@ -256,4 +260,19 @@ public class SecretaryApplication {
             })
             .then();
     }
+
+    /**
+     * 添加 CORS 配置允许前端访问
+     */
+    @Configuration
+    public static class WebConfig implements WebFluxConfigurer {
+        @Override
+        public void addCorsMappings(CorsRegistry registry) {
+            registry.addMapping("/api/**")
+                .allowedOrigins("http://localhost:3000") // 允许前端开发服务器访问
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowCredentials(true);
+        }
+    }
+    
 }
