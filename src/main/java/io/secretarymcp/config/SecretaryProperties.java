@@ -4,7 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
 import lombok.Data;
-
+import lombok.Getter;
 /**
  * 秘书系统配置属性
  */
@@ -19,6 +19,7 @@ public class SecretaryProperties {
     /**
      * 存储配置
      */
+    @Getter
     @Data
     public static class Storage {
         /**

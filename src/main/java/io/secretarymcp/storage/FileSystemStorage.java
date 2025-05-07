@@ -702,7 +702,57 @@ public class FileSystemStorage {
     }
     
     /**
-     * 保存用户ID到秘书名称的映射关系
+     * 加载用户ID到秘书名称列表的映射关系
+     * @return 映射关系Map
+     */
+    public Mono<Map<String, List<String>>> loadAllUserSecretaryMappings() {
+        Path filePath = Path.of(baseDir, USER_SECRETARY_MAPPING_FILE);
+        
+        return Mono.fromCallable(() -> {
+                if (!Files.exists(filePath)) {
+                    return new ConcurrentHashMap<String, List<String>>();
+                }
+                
+                String content = Files.readString(filePath);
+                try {
+                    // 尝试直接解析为一对多映射
+                    Map<String, List<String>> mappings = JsonUtils.fromJson(content, 
+                            new TypeReference<ConcurrentHashMap<String, List<String>>>() {});
+                    log.debug("加载用户-秘书多对应映射成功，共{}个映射", mappings.size());
+                    return mappings;
+                } catch (Exception e) {
+                    // 如果失败，可能是旧格式，尝试转换
+                    log.info("转换旧格式用户-秘书映射到新格式");
+                    Map<String, String> oldMappings = JsonUtils.fromJson(content, 
+                            new TypeReference<ConcurrentHashMap<String, String>>() {});
+                    
+                    Map<String, List<String>> newMappings = new ConcurrentHashMap<>();
+                    for (Map.Entry<String, String> entry : oldMappings.entrySet()) {
+                        List<String> secretaries = new ArrayList<>();
+                        secretaries.add(entry.getValue());
+                        newMappings.put(entry.getKey(), secretaries);
+                    }
+                    
+                    // 保存新格式以便下次使用
+                    try {
+                        String newJson = JsonUtils.toJson(newMappings);
+                        Files.writeString(filePath, newJson);
+                    } catch (Exception ex) {
+                        log.error("保存转换后的用户-秘书映射失败", ex);
+                    }
+                    
+                    return newMappings;
+                }
+            })
+            .subscribeOn(ELASTIC_SCHEDULER)
+            .onErrorResume(e -> {
+                log.error("加载用户-秘书映射失败: {}", e.getMessage(), e);
+                return Mono.just(new ConcurrentHashMap<>());
+            });
+    }
+    
+    /**
+     * 保存用户ID到秘书名称的映射关系 (支持一对多)
      * @param userId 用户ID
      * @param secretaryName 秘书名称
      * @return 操作成功与否
@@ -712,10 +762,16 @@ public class FileSystemStorage {
             return Mono.just(false);
         }
         
-        return loadUserSecretaryMappings()
+        return loadAllUserSecretaryMappings()
             .defaultIfEmpty(new ConcurrentHashMap<>())
             .flatMap(mappings -> {
-                mappings.put(userId, secretaryName);
+                // 获取用户当前的秘书列表，如果不存在则创建
+                List<String> secretaries = mappings.computeIfAbsent(userId, k -> new ArrayList<>());
+                
+                // 检查是否已存在，不存在才添加
+                if (!secretaries.contains(secretaryName)) {
+                    secretaries.add(secretaryName);
+                }
                 
                 Path filePath = Path.of(baseDir, USER_SECRETARY_MAPPING_FILE);
                 return Mono.fromCallable(() -> {
@@ -733,84 +789,76 @@ public class FileSystemStorage {
     }
     
     /**
-     * 加载用户ID到秘书名称的映射关系
-     * @return 映射关系Map
-     */
-    public Mono<Map<String, String>> loadUserSecretaryMappings() {
-        Path filePath = Path.of(baseDir, USER_SECRETARY_MAPPING_FILE);
-        
-        return Mono.fromCallable(() -> {
-                if (!Files.exists(filePath)) {
-                    return new ConcurrentHashMap<String, String>();
-                }
-                
-                String content = Files.readString(filePath);
-                Map<String, String> mappings = JsonUtils.fromJson(content, 
-                        new TypeReference<ConcurrentHashMap<String, String>>() {});
-                log.debug("加载用户-秘书映射成功，共{}个映射", mappings.size());
-                return mappings;
-            })
-            .subscribeOn(ELASTIC_SCHEDULER)
-            .onErrorResume(e -> {
-                log.error("加载用户-秘书映射失败: {}", e.getMessage(), e);
-                return Mono.just(new ConcurrentHashMap<>());
-            });
-    }
-    
-    /**
-     * 根据用户ID获取关联的秘书名称
+     * 获取用户关联的所有秘书名称
      * @param userId 用户ID
-     * @return 秘书名称
+     * @return 秘书名称列表流
      */
-    public Mono<String> getSecretaryNameByUserId(String userId) {
+    public Flux<String> getSecretaryNamesByUserId(String userId) {
         if (userId == null) {
-            return Mono.empty();
-        }
-        
-        return loadUserSecretaryMappings()
-            .map(mappings -> mappings.get(userId))
-            .flatMap(secretaryName -> {
-                if (secretaryName != null) {
-                    return Mono.just(secretaryName);
-                }
-                return Mono.empty();
-            });
-    }
-    
-    /**
-     * 根据秘书名称获取关联的用户ID列表
-     * @param secretaryName 秘书名称
-     * @return 用户ID列表
-     */
-    public Flux<String> getUserIdsBySecretaryName(String secretaryName) {
-        if (secretaryName == null) {
             return Flux.empty();
         }
         
-        return loadUserSecretaryMappings()
+        return loadAllUserSecretaryMappings()
             .flatMapMany(mappings -> {
-                List<String> userIds = new ArrayList<>();
-                for (Map.Entry<String, String> entry : mappings.entrySet()) {
-                    if (secretaryName.equals(entry.getValue())) {
-                        userIds.add(entry.getKey());
-                    }
+                List<String> secretaries = mappings.get(userId);
+                if (secretaries != null && !secretaries.isEmpty()) {
+                    return Flux.fromIterable(secretaries);
                 }
-                return Flux.fromIterable(userIds);
+                return Flux.empty();
             });
     }
     
     /**
-     * 删除用户-秘书映射
+     * 删除用户与特定秘书的关联
+     * @param userId 用户ID
+     * @param secretaryName 秘书名称
+     * @return 操作成功与否
+     */
+    public Mono<Boolean> deleteUserSecretaryMapping(String userId, String secretaryName) {
+        if (userId == null || secretaryName == null) {
+            return Mono.just(false);
+        }
+        
+        return loadAllUserSecretaryMappings()
+            .flatMap(mappings -> {
+                List<String> secretaries = mappings.get(userId);
+                if (secretaries != null) {
+                    secretaries.remove(secretaryName);
+                    
+                    // 如果列表为空，完全删除用户
+                    if (secretaries.isEmpty()) {
+                        mappings.remove(userId);
+                    }
+                }
+                
+                Path filePath = Path.of(baseDir, USER_SECRETARY_MAPPING_FILE);
+                return Mono.fromCallable(() -> {
+                    try {
+                        String json = JsonUtils.toJson(mappings);
+                        Files.writeString(filePath, json);
+                        log.debug("删除特定用户-秘书映射成功: {} -> {}", userId, secretaryName);
+                        return true;
+                    } catch (Exception e) {
+                        log.error("删除特定用户-秘书映射失败: {}", e.getMessage(), e);
+                        return false;
+                    }
+                }).subscribeOn(ELASTIC_SCHEDULER);
+            });
+    }
+    
+    /**
+     * 删除用户的所有秘书关联
      * @param userId 用户ID
      * @return 操作成功与否
      */
-    public Mono<Boolean> deleteUserSecretaryMapping(String userId) {
+    public Mono<Boolean> deleteAllUserSecretaryMappings(String userId) {
         if (userId == null) {
             return Mono.just(false);
         }
         
-        return loadUserSecretaryMappings()
+        return loadAllUserSecretaryMappings()
             .flatMap(mappings -> {
+                // 直接从映射中移除用户
                 mappings.remove(userId);
                 
                 Path filePath = Path.of(baseDir, USER_SECRETARY_MAPPING_FILE);
@@ -818,14 +866,23 @@ public class FileSystemStorage {
                     try {
                         String json = JsonUtils.toJson(mappings);
                         Files.writeString(filePath, json);
-                        log.debug("删除用户-秘书映射成功: {}", userId);
+                        log.debug("删除用户所有秘书映射成功: {}", userId);
                         return true;
                     } catch (Exception e) {
-                        log.error("删除用户-秘书映射失败: {}", e.getMessage(), e);
+                        log.error("删除用户所有秘书映射失败: {}", e.getMessage(), e);
                         return false;
                     }
                 }).subscribeOn(ELASTIC_SCHEDULER);
             });
+    }
+    
+    /**
+     * 根据用户ID获取关联的主要秘书名称
+     * @param userId 用户ID
+     * @return 主要秘书名称
+     */
+    public Mono<String> getSecretaryNameByUserId(String userId) {
+        return getSecretaryNamesByUserId(userId).next();
     }
     
     /**
@@ -834,11 +891,11 @@ public class FileSystemStorage {
      */
     private Mono<Boolean> initUserSecretaryMapping() {
         return Mono.fromCallable(() -> {
-                // 确保映射文件所在目录存在
+                // A确保映射文件所在目录存在
                 Path mappingFilePath = Path.of(baseDir, USER_SECRETARY_MAPPING_FILE);
                 if (!Files.exists(mappingFilePath)) {
-                    // 如果映射文件不存在，创建一个空的映射
-                    Map<String, String> emptyMap = new ConcurrentHashMap<>();
+                    // 如果映射文件不存在，创建一个空的映射(使用新格式)
+                    Map<String, List<String>> emptyMap = new ConcurrentHashMap<>();
                     String json = JsonUtils.toJson(emptyMap);
                     Files.writeString(mappingFilePath, json);
                     log.info("创建用户-秘书映射文件: {}", mappingFilePath);

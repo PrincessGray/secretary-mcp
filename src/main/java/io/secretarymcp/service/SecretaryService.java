@@ -84,45 +84,26 @@ public class SecretaryService {
                     
                     log.debug("开始执行秘书激活流程: {}", secretaryId);
                     
-                    // 1. 先停用所有其他秘书
-                    return deactivateAllOtherSecretaries(secretaryId)
-                            .doOnSuccess(v -> log.debug("已停用其他所有秘书"))
-                            .then(Mono.defer(() -> {
-                                // 2. 设置当前秘书为激活状态
-                                secretary.activate();
-                                log.debug("已将秘书状态设为激活: {}", secretaryId);
-                                
-                                // 3. 保存秘书状态
-                                return storage.saveSecretary(secretary)
-                                        .doOnNext(success -> {
-                                            if (success) {
-                                                log.debug("已保存秘书激活状态: {}", secretaryId);
-                                            } else {
-                                                log.warn("保存秘书激活状态失败: {}", secretaryId);
-                                            }
-                                        })
-                                        // 4. 激活该秘书的所有任务
-                                        .then(taskService.activateAllTasks(secretaryId))
-                                        .doOnSuccess(v -> log.debug("已激活秘书的所有任务: {}", secretaryId))
-                                        .thenReturn(secretary);
-                            }))
+                    // 设置当前秘书为激活状态
+                    secretary.activate();
+                    log.debug("已将秘书状态设为激活: {}", secretaryId);
+                    
+                    // 保存秘书状态
+                    return storage.saveSecretary(secretary)
+                            .doOnNext(success -> {
+                                if (success) {
+                                    log.debug("已保存秘书激活状态: {}", secretaryId);
+                                } else {
+                                    log.warn("保存秘书激活状态失败: {}", secretaryId);
+                                }
+                            })
+                            // 激活该秘书的所有任务
+                            .then(taskService.activateAllTasks(secretaryId))
+                            .doOnSuccess(v -> log.debug("已激活秘书的所有任务: {}", secretaryId))
+                            .thenReturn(secretary)
                             .doOnSuccess(s -> log.info("秘书激活成功: {}", secretaryId))
                             .doOnError(e -> log.error("秘书激活失败: {} (原因: {})", secretaryId, e.getMessage()));
                 });
-    }
-    
-    /**
-     * 停用除指定秘书外的所有秘书
-     */
-    private Mono<Void> deactivateAllOtherSecretaries(String exceptSecretaryId) {
-        log.debug("正在停用除 {} 外的所有其他秘书", exceptSecretaryId);
-        
-        return listSecretaries()
-                .filter(secretaryInfo -> secretaryInfo.isActive() && !secretaryInfo.getId().equals(exceptSecretaryId))
-                .doOnNext(secretaryInfo -> log.debug("准备停用秘书: {}", secretaryInfo.getId()))
-                .flatMap(secretaryInfo -> deactivateSecretary(secretaryInfo.getId()))
-                .then()
-                .doOnSuccess(v -> log.debug("已完成所有其他秘书的停用操作"));
     }
     
     /**

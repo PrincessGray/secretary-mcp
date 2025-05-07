@@ -5,8 +5,10 @@ import io.secretarymcp.registry.UserSecretaryRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -39,24 +41,36 @@ public class UserSecretaryController {
             .thenReturn(ResponseEntity.ok().build());
     }
     
+    @DeleteMapping("/unregister-specific")
+    public Mono<ResponseEntity<Void>> unregisterUserSecretary(
+            @RequestParam String userId,
+            @RequestParam String secretaryName) {
+        return sseProxyServer.initialize()
+            .then(sseProxyServer.getMcpServer().unregisterUserSecretary(userId, secretaryName))
+            .thenReturn(ResponseEntity.ok().build());
+    }
+    
     @GetMapping("/secretary")
     public Mono<ResponseEntity<String>> getSecretaryForUser(
             @RequestParam String userId) {
         return sseProxyServer.initialize()
-            .then(Mono.fromCallable(() -> {
-                String secretary = String.valueOf(sseProxyServer.getMcpServer().getSecretaryForUser(userId));
-                if (secretary != null) {
-                    return ResponseEntity.ok(secretary);
-                }
-                return ResponseEntity.notFound().build();
-            }));
+            .then(sseProxyServer.getMcpServer().getSecretaryForUser(userId))
+            .map(secretary -> ResponseEntity.ok(secretary))
+            .defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+    
+    @GetMapping("/secretaries")
+    public Flux<String> getSecretariesForUser(
+            @RequestParam String userId) {
+        return sseProxyServer.initialize()
+            .thenMany(sseProxyServer.getMcpServer().getSecretariesForUser(userId));
     }
 
     /**
      * 获取所有用户和Secretary的对应关系
      */
     @GetMapping("/secretary-mappings")
-    public Mono<Map<String, String>> getAllUserSecretaryMappings() {
+    public Mono<Map<String, List<String>>> getAllUserSecretaryMappings() {
         return userSecretaryRegistry.getAllUserSecretaryMappings();
     }
 }

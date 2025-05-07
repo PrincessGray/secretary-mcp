@@ -93,11 +93,22 @@ public class TemplateController {
                         HttpStatus.BAD_REQUEST, "STDIO模板必须提供command"));
             }
             
-            // 使用工厂方法创建STDIO模板
+            // 处理managementType
+            Constants.ManagementType managementType = null;
+            if (request.getManagementType() != null) {
+                try {
+                    managementType = Constants.ManagementType.valueOf(request.getManagementType());
+                } catch (IllegalArgumentException e) {
+                    log.warn("无效的管理类型: {}, 使用默认值", request.getManagementType());
+                }
+            }
+            
+            // 使用工厂方法创建STDIO模板，传入managementType
             template = TaskTemplate.createStdioTemplate(
                     request.getName(),
                     request.getDescription(),
-                    request.getStdioCommand()
+                    request.getStdioCommand(),
+                    managementType // 添加管理类型参数
             );
             
             // 设置其他STDIO特定参数
@@ -226,17 +237,17 @@ public class TemplateController {
     public static class CreateTemplateRequest {
         private String name;
         private String description;
-        private String connectionType; // "sse" 或 "stdio"
+        private String connectionType; // "SSE" 或 "STDIO"
         
         // SSE特定参数
         private String sseServerUrl;
         private String sseAuthToken;
-        private Map<String, String> sseHeaders;
         
         // STDIO特定参数
         private String stdioCommand;
         private List<String> stdioArgs;
         private Map<String, String> stdioEnv;
+        private String managementType; // 新增管理类型字段
         
         // 通用配置参数
         private Integer timeoutSeconds;

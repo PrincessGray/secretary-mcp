@@ -1,6 +1,8 @@
 package io.secretarymcp.registry; // 或其他适当的包
 
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -10,10 +12,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Flux;
 
 /**
  * 用户与Secretary映射注册表
  * 管理用户ID到Secretary名称的映射关系，用于工具访问控制
+ * 支持一个用户关联多个秘书
  */
 @Component
 public class UserSecretaryRegistry {
@@ -26,8 +30,8 @@ public class UserSecretaryRegistry {
         this.storage = storage;
     }
     
-    // 用户ID -> Secretary名称的映射
-    private final Map<String, String> userSecretaryMap = new ConcurrentHashMap<>();
+    // 用户ID -> Secretary名称列表的映射
+    private final Map<String, List<String>> userSecretariesMap = new ConcurrentHashMap<>();
 
     
     /**
@@ -39,34 +43,63 @@ public class UserSecretaryRegistry {
         if (userId == null || secretaryName == null) {
             return Mono.error(new IllegalArgumentException("用户ID和Secretary名称不能为null"));
         }
+        // 修改为支持多对应关系的存储方法
         return storage.saveUserSecretaryMapping(userId, secretaryName).then();
     }
     
     /**
-     * 获取用户关联的Secretary名称
+     * 获取用户关联的所有Secretary名称
      * @param userId 用户ID
-     * @return Secretary名称，如果用户未注册则返回null
+     * @return Secretary名称列表，如果用户未注册则返回空列表
      */
-    public Mono<String> getSecretaryForUser(String userId) {
-        return storage.getSecretaryNameByUserId(userId);
+    public Flux<String> getSecretariesForUser(String userId) {
+        return storage.getSecretaryNamesByUserId(userId);
     }
     
     /**
-     * 同步方法获取用户关联的Secretary名称，用于非响应式上下文
+     * 获取用户关联的主要Secretary名称（第一个）
      * @param userId 用户ID
-     * @return Secretary名称，如果用户未注册则返回null
+     * @return 主要Secretary名称，如果用户未注册则返回null
      */
-    public String getSecretaryForUserSync(String userId) {
-        return storage.getSecretaryNameByUserId(userId).block();
+    public Mono<String> getPrimarySecretaryForUser(String userId) {
+        return getSecretariesForUser(userId).next().defaultIfEmpty(null);
     }
     
     /**
-     * 移除用户与Secretary的关联
+     * 同步方法获取用户关联的主要Secretary名称，用于非响应式上下文
+     * @param userId 用户ID
+     * @return 主要Secretary名称，如果用户未注册则返回null
+     */
+    public String getPrimarySecretaryForUserSync(String userId) {
+        return getPrimarySecretaryForUser(userId).block();
+    }
+    
+    /**
+     * 同步方法获取用户关联的所有Secretary名称，用于非响应式上下文
+     * @param userId 用户ID
+     * @return Secretary名称列表，如果用户未注册则返回空列表
+     */
+    public List<String> getSecretariesForUserSync(String userId) {
+        return getSecretariesForUser(userId).collectList().block();
+    }
+    
+    /**
+     * 移除用户与特定Secretary的关联
+     * @param userId 用户ID
+     * @param secretaryName Secretary名称
+     * @return 操作完成的Mono
+     */
+    public Mono<Void> unregisterUserSecretary(String userId, String secretaryName) {
+        return storage.deleteUserSecretaryMapping(userId, secretaryName).then();
+    }
+    
+    /**
+     * 移除用户的所有Secretary关联
      * @param userId 用户ID
      * @return 操作完成的Mono
      */
-    public Mono<Void> unregisterUser(String userId) {
-        return storage.deleteUserSecretaryMapping(userId).then();
+    public Mono<Void> unregisterAllUserSecretaries(String userId) {
+        return storage.deleteAllUserSecretaryMappings(userId).then();
     }
     
     /**
@@ -146,16 +179,16 @@ public class UserSecretaryRegistry {
             return false;
         }
         
-        // 获取用户关联的Secretary
-        String userSecretary = getSecretaryForUserSync(userId);
+        // 获取用户关联的所有Secretary
+        List<String> userSecretaries = getSecretariesForUserSync(userId);
         
-        // 如果用户未关联Secretary，不允许访问任何工具
-        if (userSecretary == null) {
+        // 如果用户未关联任何Secretary，不允许访问任何工具
+        if (userSecretaries == null || userSecretaries.isEmpty()) {
             return false;
         }
         
-        // 检查工具的Secretary是否与用户的Secretary匹配
-        return userSecretary.equals(secretaryFromTool);
+        // 检查工具的Secretary是否与用户的任一Secretary匹配
+        return userSecretaries.contains(secretaryFromTool);
     }
     
     /**
@@ -195,29 +228,31 @@ public class UserSecretaryRegistry {
      * 获取所有注册的用户ID
      */
     public Set<String> getAllRegisteredUsers() {
-        return new HashSet<>(userSecretaryMap.keySet());
+        return new HashSet<>(userSecretariesMap.keySet());
     }
     
     /**
      * 获取所有Secretary名称
      */
     public Set<String> getAllSecretaries() {
-        return new HashSet<>(userSecretaryMap.values());
+        Set<String> allSecretaries = new HashSet<>();
+        userSecretariesMap.values().forEach(allSecretaries::addAll);
+        return allSecretaries;
     }
     
     /**
      * 获取所有用户和Secretary的对应关系
-     * @return 用户ID到Secretary名称的映射关系
+     * @return 用户ID到Secretary名称列表的映射关系
      */
-    public Mono<Map<String, String>> getAllUserSecretaryMappings() {
-        return storage.loadUserSecretaryMappings();
+    public Mono<Map<String, List<String>>> getAllUserSecretaryMappings() {
+        return storage.loadAllUserSecretaryMappings();
     }
     
     /**
      * 获取所有用户和Secretary的对应关系（同步版本）
-     * @return 用户ID到Secretary名称的映射关系
+     * @return 用户ID到Secretary名称列表的映射关系
      */
-    public Map<String, String> getAllUserSecretaryMappingsSync() {
-        return storage.loadUserSecretaryMappings().block();
+    public Map<String, List<String>> getAllUserSecretaryMappingsSync() {
+        return getAllUserSecretaryMappings().block();
     }
 }

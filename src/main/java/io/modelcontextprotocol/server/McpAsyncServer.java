@@ -274,7 +274,7 @@ public class McpAsyncServer {
 		}
 		
 		return this.delegate.unregisterUser(userId)
-			.doOnSuccess(v -> logger.info("Unregistered user [{}]", userId));
+			.doOnSuccess(v -> logger.info("Unregistered all secretaries for user [{}]", userId));
 	}
 
 	/**
@@ -287,6 +287,42 @@ public class McpAsyncServer {
 			return Mono.error(new McpError("User ID must not be null"));
 		}
 		return this.delegate.getSecretaryForUser(userId);
+	}
+
+	/**
+	 * 获取用户关联的所有秘书名称
+	 * @param userId 用户ID
+	 * @return 秘书名称列表
+	 */
+	public Flux<String> getSecretariesForUser(String userId) {
+		if (userId == null) {
+			return Flux.error(new McpError("User ID must not be null"));
+		}
+		return this.delegate.getSecretariesForUser(userId);
+	}
+
+
+	/**
+	 * 解除用户与特定秘书的关联
+	 * @param userId 用户ID
+	 * @param secretaryName 秘书名称
+	 * @return 操作完成的Mono
+	 */
+	public Mono<Void> unregisterUserSecretary(String userId, String secretaryName) {
+		if (userId == null || secretaryName == null) {
+			return Mono.error(new McpError("User ID and Secretary name must not be null"));
+		}
+		
+		return this.delegate.unregisterUserSecretary(userId, secretaryName)
+			.doOnSuccess(v -> logger.info("Unregistered user [{}] from secretary [{}]", userId, secretaryName));
+	}
+
+	/**
+	 * 获取所有用户-秘书映射关系
+	 * @return 映射关系
+	 */
+	public Mono<Map<String, List<String>>> getAllUserSecretaryMappings() {
+		return this.delegate.getAllUserSecretaryMappings();
 	}
 
 	private static class AsyncServerImpl extends McpAsyncServer {
@@ -526,7 +562,7 @@ public class McpAsyncServer {
 				// 获取会话ID
 				String sessionId = exchange.getSession().getId();
 				
-				// 提取用户ID（假设格式为"userId:uuid"）
+				// 提取用户ID
 				String userId = userSecretaryRegistry != null ? 
 					userSecretaryRegistry.extractUserIdFromSessionId(sessionId) : null;
 				
@@ -543,10 +579,11 @@ public class McpAsyncServer {
 					return Mono.just(new McpSchema.ListToolsResult(allTools, null));
 				}
 				
-				// 如果有用户ID，获取用户关联的Secretary
+				// 如果有用户ID，获取用户关联的所有Secretary
 				List<Tool> finalAllTools = allTools;
-				return userSecretaryRegistry.getSecretaryForUser(userId)
-					.map(secretaryName -> {
+				return userSecretaryRegistry.getSecretariesForUser(userId)
+					.collectList()
+					.map(secretaryNames -> {
 						// 用户有关联的Secretary，过滤工具列表
 						List<Tool> filteredTools = finalAllTools.stream()
 							.filter(tool -> {
@@ -555,8 +592,10 @@ public class McpAsyncServer {
 									return true;
 								}
 								
-								// 检查工具是否属于该用户的Secretary
-								return userSecretaryRegistry.isToolBelongsToSecretary(tool.name(), secretaryName);
+								// 检查工具是否属于该用户的任何一个Secretary
+								return secretaryNames.stream()
+									.anyMatch(secretaryName -> 
+										userSecretaryRegistry.isToolBelongsToSecretary(tool.name(), secretaryName));
 							})
 							.toList();
 						
@@ -588,23 +627,43 @@ public class McpAsyncServer {
 				// 系统工具总是可访问的
 				boolean isSystemTool = toolName.contains("system_");
 				
-				// 工具权限检查
-				if (!isSystemTool && userSecretaryRegistry != null && 
-					(userId == null || !userSecretaryRegistry.canUserAccessTool(userId, toolName))) {
-					return Mono.error(new McpError("Access denied to tool: " + toolName));
+				// 工具权限检查 - 使用新的检查方法支持多秘书
+				if (!isSystemTool && userSecretaryRegistry != null && userId != null) {
+					return userSecretaryRegistry.getSecretariesForUser(userId)
+						.collectList()
+						.flatMap(secretaryNames -> {
+							// 检查工具是否属于用户的任何一个秘书
+							boolean canAccess = secretaryNames.stream()
+								.anyMatch(secretaryName -> 
+									userSecretaryRegistry.isToolBelongsToSecretary(toolName, secretaryName));
+							
+							if (!canAccess) {
+								return Mono.error(new McpError("Access denied to tool: " + toolName));
+							}
+							
+							// 继续处理工具调用
+							Optional<McpServerFeatures.AsyncToolSpecification> toolSpecification = tools.stream()
+								.filter(tr -> toolName.equals(tr.tool().name()))
+								.findAny();
+							
+							if (toolSpecification.isEmpty()) {
+								return Mono.error(new McpError("Tool not found: " + toolName));
+							}
+							
+							return toolSpecification.get().call().apply(exchange, callToolRequest.arguments());
+						});
 				}
-
+				
 				// 查找工具并调用
 				Optional<McpServerFeatures.AsyncToolSpecification> toolSpecification = this.tools.stream()
 					.filter(tr -> toolName.equals(tr.tool().name()))
 					.findAny();
-
+				
 				if (toolSpecification.isEmpty()) {
 					return Mono.error(new McpError("Tool not found: " + toolName));
 				}
-
-				return toolSpecification.map(tool -> tool.call().apply(exchange, callToolRequest.arguments()))
-					.orElse(Mono.error(new McpError("Tool not found: " + toolName)));
+				
+				return toolSpecification.get().call().apply(exchange, callToolRequest.arguments());
 			};
 		}
 
@@ -843,15 +902,37 @@ public class McpAsyncServer {
 				return Mono.error(new McpError("User ID must not be null"));
 			}
 			
-			return userSecretaryRegistry.unregisterUser(userId)
-				.doOnSuccess(v -> logger.info("Unregistered user [{}]", userId));
+			return userSecretaryRegistry.unregisterAllUserSecretaries(userId)
+				.doOnSuccess(v -> logger.info("Unregistered all secretaries for user [{}]", userId));
 		}
 
 		@Override
 		public Mono<String> getSecretaryForUser(String userId) {
-			return userSecretaryRegistry.getSecretaryForUser(userId);
+			return userSecretaryRegistry.getPrimarySecretaryForUser(userId);
 		}
 		
+		@Override
+		public Flux<String> getSecretariesForUser(String userId) {
+			if (userId == null) {
+				return Flux.error(new McpError("User ID must not be null"));
+			}
+			return userSecretaryRegistry.getSecretariesForUser(userId);
+		}
+
+		@Override
+		public Mono<Void> unregisterUserSecretary(String userId, String secretaryName) {
+			if (userId == null || secretaryName == null) {
+				return Mono.error(new McpError("User ID and Secretary name must not be null"));
+			}
+			
+			return userSecretaryRegistry.unregisterUserSecretary(userId, secretaryName)
+				.doOnSuccess(v -> logger.info("Unregistered user [{}] from secretary [{}]", userId, secretaryName));
+		}
+
+		@Override
+		public Mono<Map<String, List<String>>> getAllUserSecretaryMappings() {
+			return userSecretaryRegistry.getAllUserSecretaryMappings();
+		}
 
 	}
 

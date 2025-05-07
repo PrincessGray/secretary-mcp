@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.HashMap;
+import io.secretarymcp.config.SecretaryProperties;
 
 /**
  * 上游客户端工厂，负责创建、缓存和管理不同类型的上游客户端
@@ -35,6 +36,7 @@ public class UpstreamClientFactory {
     private static final Logger log = LoggerFactory.getLogger(UpstreamClientFactory.class);
     
     private final ObjectMapper objectMapper;
+    
     
     // 客户端缓存，按任务ID索引
     private final ConcurrentHashMap<String, UpstreamClient> clientCache = new ConcurrentHashMap<>();
@@ -256,21 +258,85 @@ public class UpstreamClientFactory {
                     envVars.put("APPDATA", System.getenv("APPDATA"));
                 }
                 
+                // 处理工作目录
+                String workingDir;
+                
+                // 检查是否有WORKING_DIR环境变量，以及是否设置为default
+                boolean useDefaultWorkDir = false;
+                if (envVars.containsKey("WORKING_DIR") && 
+                    "default".equalsIgnoreCase(envVars.get("WORKING_DIR"))) {
+                    useDefaultWorkDir = true;
+                    log.info("检测到WORKING_DIR=default，将使用任务特定工作目录");
+                } else if (!envVars.containsKey("WORKING_DIR")) {
+                    // 如果没有WORKING_DIR环境变量，也使用任务特定工作目录
+                    useDefaultWorkDir = true;
+                    log.info("未找到WORKING_DIR环境变量，将使用任务特定工作目录");
+                }
+                
+                if (useDefaultWorkDir) {
+                    try {
+                        // 直接创建SecretaryProperties实例
+                        SecretaryProperties secretaryProps = new SecretaryProperties();
+                        String baseDir = secretaryProps.getStorage().getBaseDir();
+                        
+                        // 注意：这里baseDir可能包含"${user.home}"占位符，需要手动替换
+                        if (baseDir.contains("${user.home}")) {
+                            baseDir = baseDir.replace("${user.home}", System.getProperty("user.home"));
+                        }
+                        
+                        String secretaryId = config.getSecretaryName();
+                        String taskId = config.getTaskId();
+                        
+                        // 使用Paths.get构建路径
+                        java.nio.file.Path workDirPath = java.nio.file.Paths.get(
+                            baseDir, "secretaries", secretaryId, "tasks", taskId, "work");
+                        workingDir = workDirPath.toString();
+                        
+                        log.info("使用默认基础目录: {}", baseDir);
+                        log.info("构建的任务特定工作目录: {}", workingDir);
+                        
+                        // 确保目录存在
+                        java.io.File workDir = workDirPath.toFile();
+                        if (!workDir.exists()) {
+                            boolean created = workDir.mkdirs();
+                            if (created) {
+                                log.info("已创建任务特定工作目录: {}", workingDir);
+                            } else {
+                                log.warn("无法创建任务特定工作目录: {}", workingDir);
+                                // 如果创建失败，使用stdioConfig中的工作目录或当前目录
+                                workingDir = stdioConfig.getWorkingDir();
+                                if (workingDir == null || workingDir.isEmpty()) {
+                                    workingDir = System.getProperty("user.dir");
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.error("构建任务特定工作目录时出错", e);
+                        // 如果出错，使用stdioConfig中的工作目录或当前目录
+                        workingDir = stdioConfig.getWorkingDir();
+                        if (workingDir == null || workingDir.isEmpty()) {
+                            workingDir = System.getProperty("user.dir");
+                        }
+                    }
+                } else {
+                    // 使用环境变量中的WORKING_DIR或stdioConfig中的设置
+                    workingDir = envVars.getOrDefault("WORKING_DIR", stdioConfig.getWorkingDir());
+                    if (workingDir == null || workingDir.isEmpty()) {
+                        workingDir = System.getProperty("user.dir");
+                        log.info("未指定工作目录，使用当前目录: {}", workingDir);
+                    }
+                }
+                
+                log.info("最终工作目录: {}", workingDir);
+                
+                // 更新环境变量中的WORKING_DIR
+                envVars.put("WORKING_DIR", workingDir);
+                
+                // 设置环境变量
                 if (!envVars.isEmpty()) {
                     log.info("环境变量: {}", envVars);
                     paramsBuilder.env(envVars);
                 }
-                
-                // 通过环境变量传递工作目录
-                String workingDir = stdioConfig.getWorkingDir();
-                if (workingDir == null || workingDir.isEmpty()) {
-                    // 如果未指定工作目录，使用当前目录
-                    workingDir = System.getProperty("user.dir");
-                    log.info("未指定工作目录，使用当前目录: {}", workingDir);
-                }
-                
-                log.info("工作目录: {}", workingDir);
-                paramsBuilder.addEnvVar("WORKING_DIR", workingDir);
                 
                 // 构建服务器参数
                 ServerParameters params = paramsBuilder.build();
