@@ -53,6 +53,7 @@ application-local.yml
 # 其他文件
 *.swp
 *~
+*.txt
 
 # 库文件夹
 java-sdk-main/

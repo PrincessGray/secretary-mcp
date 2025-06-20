@@ -1,9 +1,6 @@
-
----
-
 # Secretary MCP 管理系统
 
-> 一个统一的 MCP（Model Context Protocol）代理平台，默认运行在 **8765** 端口。
+一个统一的 MCP（Model Context Protocol）代理平台，默认运行在 **8765** 端口。
 
 前端页面：http://localhost:8765/
 
