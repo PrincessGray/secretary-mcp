@@ -56,3 +56,12 @@ application-local.yml
 
 # 库文件夹
 java-sdk-main/
+
+# 其他文件夹
+node/
+secretary-mcp-cli/
+src/main/node_modules/
+src/main/ts/node_modules/
+src/main/ts/dist/
+src/main/ts/dist-ssr/
+src/main/resources/
