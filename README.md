@@ -2,7 +2,7 @@
 
 一个统一的 MCP（Model Context Protocol）代理平台，默认运行在 **8765** 端口。
 
-旨在将tools的管理过程模块化
+本项目旨在将tools的管理过程从智能体架构中独立, 赋予所有支持mcp的智能体一站式配置工具的能力
 
 前端页面：http://localhost:8765/
 
